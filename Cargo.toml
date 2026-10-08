@@ -1,0 +1,90 @@
+[package]
+name        = "sqlrustler"
+version     = "0.1.0"
+edition     = "2021"
+rust-version = "1.80"
+description = "Fast Azure SQL Database export/import — open-source BACPAC replacement"
+license     = "MIT OR Apache-2.0"
+repository  = "https://github.com/MrKruge/sqlrustler"
+keywords    = ["azure", "sql-server", "parquet", "export", "bacpac"]
+categories  = ["command-line-utilities", "database"]
+
+[[bin]]
+name = "sqlrustler"
+path = "src/main.rs"
+
+[lib]
+name = "sqlrustler"
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime
+tokio          = { version = "1.53", features = ["full"] }
+futures        = "0.3"
+
+# SQL Server / TDS
+tiberius       = { version = "0.12", default-features = false, features = [
+    "tokio",
+    "rustls",
+    "tds73",
+    "bigdecimal",
+    "chrono",
+] }
+bb8            = "0.9"
+bb8-tiberius   = { version = "0.16", features = ["tls", "tds73", "chrono"] }
+tokio-util     = { version = "0.7", features = ["compat"] }
+
+# Columnar / Parquet
+arrow          = { version = "54", features = ["prettyprint"] }
+parquet        = { version = "54", features = ["arrow"] }
+
+# Archive
+tar            = "0.4"
+zstd           = "0.13"
+
+# CLI
+clap           = { version = "4.5", features = ["derive", "env", "unicode"] }
+
+# Progress / UX
+indicatif      = "0.17"
+console        = "0.15"
+
+# Serialization
+serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
+
+# Error handling
+anyhow         = "1"
+thiserror      = "1"
+
+# Logging / tracing
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Date/time
+chrono         = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid           = { version = "1", features = ["v4", "serde"] }
+
+# Misc
+bigdecimal     = "0.3"
+num_cpus       = "1"
+tempfile       = "3"
+bytesize       = "1"
+bytes          = "1"
+rpassword      = "7"
+which          = "6"
+regex          = "1"
+glob           = "0.3"
+
+[dev-dependencies]
+tokio-test     = "0.4"
+assert_cmd     = "2.0"
+predicates     = "3.1"
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
