@@ -28,6 +28,8 @@ pub enum Command {
     Import(ImportArgs),
     /// Benchmark export speed, optionally comparing against sqlpackage
     Bench(BenchArgs),
+    /// Launch the interactive cowboy TUI
+    Tui,
 }
 
 /// Shared connection parameters — embedded into each subcommand via #[command(flatten)]

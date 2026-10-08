@@ -165,3 +165,148 @@ pub fn fqn_to_filename(fqn: &str) -> String {
 pub fn parquet_archive_path(fqn: &str) -> String {
     format!("data/{}.parquet", fqn_to_filename(fqn))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // ── fqn_to_filename ───────────────────────────────────────────────────────
+
+    #[test]
+    fn fqn_to_filename_simple() {
+        assert_eq!(fqn_to_filename("[dbo].[Orders]"), "dbo_Orders");
+    }
+
+    #[test]
+    fn fqn_to_filename_with_spaces() {
+        assert_eq!(fqn_to_filename("[my schema].[My Table]"), "my schema_My Table");
+    }
+
+    #[test]
+    fn fqn_to_filename_strips_leading_trailing_underscores() {
+        // The function replaces '.' with '_' then trims '_' at edges.
+        // "[dbo].[T]" → "dbo_T" (no edge underscores)
+        assert_eq!(fqn_to_filename("[dbo].[T]"), "dbo_T");
+    }
+
+    // ── parquet_archive_path ──────────────────────────────────────────────────
+
+    #[test]
+    fn parquet_archive_path_simple() {
+        assert_eq!(parquet_archive_path("[dbo].[Orders]"), "data/dbo_Orders.parquet");
+    }
+
+    #[test]
+    fn parquet_archive_path_with_spaces() {
+        assert_eq!(
+            parquet_archive_path("[my schema].[My Table]"),
+            "data/my schema_My Table.parquet"
+        );
+    }
+
+    // ── ArchiveWriter + ArchiveReader round-trip ──────────────────────────────
+
+    fn sample_manifest() -> Manifest {
+        Manifest {
+            sqlrustler_version: "0.1.0-test".to_string(),
+            format_version: 1,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            source_host: "testhost".to_string(),
+            source_database: "testdb".to_string(),
+            tables: vec![ManifestTable {
+                table_fqn: "[dbo].[Orders]".to_string(),
+                file_name: "data/dbo_Orders.parquet".to_string(),
+                row_count: 42,
+                has_identity: true,
+                identity_columns: vec!["Id".to_string()],
+            }],
+            total_rows: 42,
+            schema_only: false,
+        }
+    }
+
+    #[test]
+    fn archive_round_trip_manifest_and_schema() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("test.rustler");
+
+        let manifest = sample_manifest();
+        let schema_sql = "CREATE TABLE [dbo].[Orders] (Id INT IDENTITY(1,1) NOT NULL);";
+        // Arbitrary synthetic "parquet" bytes — ArchiveReader stores them as Vec<u8>
+        let fake_parquet: Vec<u8> = vec![0x50, 0x41, 0x52, 0x31, 0xDE, 0xAD, 0xBE, 0xEF];
+
+        // Write parquet bytes to a temp file so add_parquet_file can open it
+        let parquet_tmp = dir.path().join("dbo_Orders.parquet");
+        std::fs::write(&parquet_tmp, &fake_parquet).unwrap();
+
+        // Write archive
+        {
+            let mut writer = ArchiveWriter::create(&archive_path, 1).unwrap();
+            writer.write_manifest(&manifest).unwrap();
+            writer.write_schema_sql(schema_sql).unwrap();
+            writer
+                .add_parquet_file("data/dbo_Orders.parquet", &parquet_tmp)
+                .unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read archive back
+        let reader = ArchiveReader::open(&archive_path).unwrap();
+
+        // Verify manifest
+        let read_manifest = reader.read_manifest().unwrap();
+        assert_eq!(read_manifest.sqlrustler_version, manifest.sqlrustler_version);
+        assert_eq!(read_manifest.format_version, manifest.format_version);
+        assert_eq!(read_manifest.source_database, manifest.source_database);
+        assert_eq!(read_manifest.total_rows, manifest.total_rows);
+        assert_eq!(read_manifest.tables.len(), 1);
+        assert_eq!(read_manifest.tables[0].table_fqn, "[dbo].[Orders]");
+        assert_eq!(read_manifest.tables[0].row_count, 42);
+        assert!(read_manifest.tables[0].has_identity);
+        assert_eq!(read_manifest.tables[0].identity_columns, vec!["Id"]);
+
+        // Verify schema.sql
+        let read_schema = reader.read_schema_sql().unwrap();
+        assert_eq!(read_schema, schema_sql);
+
+        // Verify Parquet bytes (byte-for-byte)
+        let read_parquet = reader.read_parquet("data/dbo_Orders.parquet").unwrap();
+        assert_eq!(read_parquet, fake_parquet);
+    }
+
+    #[test]
+    fn archive_reader_missing_manifest_returns_error() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("empty.rustler");
+
+        // Write archive with schema only, no manifest
+        {
+            let mut writer = ArchiveWriter::create(&archive_path, 1).unwrap();
+            writer.write_schema_sql("-- no tables").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let reader = ArchiveReader::open(&archive_path).unwrap();
+        assert!(reader.read_manifest().is_err(), "should error when manifest.json missing");
+    }
+
+    #[test]
+    fn archive_reader_missing_parquet_returns_error() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("no_parquet.rustler");
+
+        {
+            let mut writer = ArchiveWriter::create(&archive_path, 1).unwrap();
+            writer.write_manifest(&sample_manifest()).unwrap();
+            writer.write_schema_sql("-- schema").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let reader = ArchiveReader::open(&archive_path).unwrap();
+        assert!(
+            reader.read_parquet("data/nonexistent.parquet").is_err(),
+            "should error when parquet file missing"
+        );
+    }
+}

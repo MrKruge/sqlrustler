@@ -337,7 +337,7 @@ fn arrow_value_to_sql(col: &dyn arrow::array::Array, row_idx: usize) -> String {
 }
 
 /// Split schema.sql into pre-data and post-data sections at the POST_DATA marker.
-fn split_schema_sql(sql: &str) -> (&str, &str) {
+pub(crate) fn split_schema_sql(sql: &str) -> (&str, &str) {
     if let Some(pos) = sql.find(POST_DATA_MARKER) {
         (&sql[..pos], &sql[pos + POST_DATA_MARKER.len()..])
     } else {
@@ -392,4 +392,361 @@ async fn drop_and_recreate_database(args: &ImportArgs) -> Result<()> {
 
     tracing::info!("Database [{db}] recreated");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{
+        BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder, Int16Builder,
+        Int32Builder, Int64Builder, Int8Builder, StringArray, Time64MicrosecondBuilder,
+        TimestampMicrosecondBuilder, UInt8Builder,
+    };
+    use arrow::datatypes::TimeUnit;
+    use std::sync::Arc;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    fn scalar<B: arrow::array::ArrayBuilder>(mut builder: B, append: impl Fn(&mut B)) -> Arc<dyn arrow::array::Array> {
+        append(&mut builder);
+        Arc::new(builder.finish())
+    }
+
+    fn null_array(data_type: arrow::datatypes::DataType) -> Arc<dyn arrow::array::Array> {
+        use arrow::array::new_null_array;
+        new_null_array(&data_type, 1)
+    }
+
+    // ── NULL tests ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn null_int32_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Int32);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_utf8_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Utf8);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_decimal128_returns_null() {
+        let mut builder = Decimal128Builder::new().with_precision_and_scale(18, 4).unwrap();
+        builder.append_null();
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(builder.finish());
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_binary_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Binary);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_boolean_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Boolean);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_timestamp_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Timestamp(
+            TimeUnit::Microsecond,
+            Some("UTC".into()),
+        ));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_date32_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Date32);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    #[test]
+    fn null_time64_returns_null() {
+        let arr = null_array(arrow::datatypes::DataType::Time64(TimeUnit::Microsecond));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "NULL");
+    }
+
+    // ── Integer types ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn int8_produces_number_string() {
+        let arr = scalar(Int8Builder::new(), |b| b.append_value(42));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "42");
+    }
+
+    #[test]
+    fn int16_produces_number_string() {
+        let arr = scalar(Int16Builder::new(), |b| b.append_value(1000));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "1000");
+    }
+
+    #[test]
+    fn int32_produces_number_string() {
+        let arr = scalar(Int32Builder::new(), |b| b.append_value(-99999));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "-99999");
+    }
+
+    #[test]
+    fn int64_produces_number_string() {
+        let arr = scalar(Int64Builder::new(), |b| b.append_value(9_876_543_210i64));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "9876543210");
+    }
+
+    #[test]
+    fn uint8_produces_number_string() {
+        let arr = scalar(UInt8Builder::new(), |b| b.append_value(255));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "255");
+    }
+
+    // ── Boolean ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn boolean_true_produces_1() {
+        let arr = scalar(BooleanBuilder::new(), |b| b.append_value(true));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "1");
+    }
+
+    #[test]
+    fn boolean_false_produces_0() {
+        let arr = scalar(BooleanBuilder::new(), |b| b.append_value(false));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "0");
+    }
+
+    // ── Decimal128 ────────────────────────────────────────────────────────────
+
+    fn decimal_array(raw: i128, precision: u8, scale: i8) -> Arc<dyn arrow::array::Array> {
+        let mut b = Decimal128Builder::new()
+            .with_precision_and_scale(precision, scale)
+            .unwrap();
+        b.append_value(raw);
+        Arc::new(b.finish())
+    }
+
+    #[test]
+    fn decimal128_scale0_raw_12345() {
+        let arr = decimal_array(12345, 10, 0);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "12345");
+    }
+
+    #[test]
+    fn decimal128_scale2_positive() {
+        // raw=12345, scale=2 → "123.45"
+        let arr = decimal_array(12345, 10, 2);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "123.45");
+    }
+
+    #[test]
+    fn decimal128_scale2_negative() {
+        // raw=-12345, scale=2 → "-123.45"  (the sign bug fix)
+        let arr = decimal_array(-12345, 10, 2);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "-123.45");
+    }
+
+    #[test]
+    fn decimal128_scale2_negative_near_zero() {
+        // raw=-5, scale=2 → "-0.05"  (the near-zero sign bug fix)
+        let arr = decimal_array(-5, 10, 2);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "-0.05");
+    }
+
+    #[test]
+    fn decimal128_scale2_positive_near_zero() {
+        // raw=5, scale=2 → "0.05"
+        let arr = decimal_array(5, 10, 2);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "0.05");
+    }
+
+    #[test]
+    fn decimal128_scale4_large() {
+        // raw=12345678, scale=4 → "1234.5678"
+        let arr = decimal_array(12345678, 18, 4);
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "1234.5678");
+    }
+
+    // ── Utf8 / strings ────────────────────────────────────────────────────────
+
+    #[test]
+    fn utf8_plain_string_wrapped_in_n_quotes() {
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(StringArray::from(vec!["hello"]));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "N'hello'");
+    }
+
+    #[test]
+    fn utf8_single_quote_escaped() {
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(StringArray::from(vec!["it's"]));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "N'it''s'");
+    }
+
+    #[test]
+    fn utf8_empty_string() {
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(StringArray::from(vec![""]));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "N''");
+    }
+
+    // ── Binary ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn binary_bytes_to_hex_literal() {
+        let mut b = BinaryBuilder::new();
+        b.append_value(&[0xDE_u8, 0xAD, 0xBE, 0xEF]);
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(b.finish());
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "0xDEADBEEF");
+    }
+
+    #[test]
+    fn binary_empty_bytes_to_0x() {
+        let mut b = BinaryBuilder::new();
+        b.append_value(&[] as &[u8]);
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(b.finish());
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "0x");
+    }
+
+    // ── Timestamp ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn timestamp_epoch_zero() {
+        let mut b = TimestampMicrosecondBuilder::new();
+        b.append_value(0); // epoch 0 microseconds
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(
+            b.finish()
+                .with_timezone("UTC".to_string()),
+        );
+        let result = arrow_value_to_sql(arr.as_ref(), 0);
+        assert_eq!(result, "'1970-01-01T00:00:00.000000Z'");
+    }
+
+    #[test]
+    fn timestamp_known_value() {
+        // 1_000_000 microseconds = 1 second after epoch
+        let mut b = TimestampMicrosecondBuilder::new();
+        b.append_value(1_000_000);
+        let arr: Arc<dyn arrow::array::Array> = Arc::new(
+            b.finish()
+                .with_timezone("UTC".to_string()),
+        );
+        let result = arrow_value_to_sql(arr.as_ref(), 0);
+        assert_eq!(result, "'1970-01-01T00:00:01.000000Z'");
+    }
+
+    // ── Date32 ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn date32_day_0_is_epoch() {
+        let arr = scalar(Date32Builder::new(), |b| b.append_value(0));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "'1970-01-01'");
+    }
+
+    #[test]
+    fn date32_day_1_is_jan_2() {
+        let arr = scalar(Date32Builder::new(), |b| b.append_value(1));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "'1970-01-02'");
+    }
+
+    // ── Time64 ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn time64_zero_micros_is_midnight() {
+        let arr = scalar(Time64MicrosecondBuilder::new(), |b| b.append_value(0));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "'00:00:00.000000'");
+    }
+
+    #[test]
+    fn time64_3661000001_micros() {
+        // 3661000001 us = 1h + 1m + 1s + 1us → '01:01:01.000001'
+        let arr = scalar(Time64MicrosecondBuilder::new(), |b| b.append_value(3_661_000_001));
+        assert_eq!(arrow_value_to_sql(arr.as_ref(), 0), "'01:01:01.000001'");
+    }
+
+    // ── validate_fqn ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn valid_fqn_simple() {
+        assert!(validate_fqn("[dbo].[Orders]").is_ok());
+    }
+
+    #[test]
+    fn valid_fqn_with_spaces() {
+        assert!(validate_fqn("[my schema].[My Table]").is_ok());
+    }
+
+    #[test]
+    fn invalid_fqn_no_brackets() {
+        assert!(validate_fqn("dbo.Orders").is_err());
+    }
+
+    #[test]
+    fn invalid_fqn_sql_injection() {
+        assert!(validate_fqn("[dbo].[t]; DROP TABLE users--").is_err());
+    }
+
+    #[test]
+    fn invalid_fqn_empty_string() {
+        assert!(validate_fqn("").is_err());
+    }
+
+    #[test]
+    fn invalid_fqn_missing_schema() {
+        assert!(validate_fqn("[Orders]").is_err());
+    }
+
+    // ── validate_database_name ────────────────────────────────────────────────
+
+    #[test]
+    fn valid_db_name_alpha() {
+        assert!(validate_database_name("mydb").is_ok());
+    }
+
+    #[test]
+    fn valid_db_name_with_underscore_and_digits() {
+        assert!(validate_database_name("my_db_2").is_ok());
+    }
+
+    #[test]
+    fn invalid_db_name_hyphen() {
+        assert!(validate_database_name("my-db").is_err());
+    }
+
+    #[test]
+    fn invalid_db_name_sql_injection() {
+        assert!(validate_database_name("db; DROP DATABASE master--").is_err());
+    }
+
+    #[test]
+    fn invalid_db_name_empty() {
+        assert!(validate_database_name("").is_err());
+    }
+
+    // ── split_schema_sql ──────────────────────────────────────────────────────
+
+    #[test]
+    fn split_with_marker_separates_correctly() {
+        let marker = crate::schema::POST_DATA_MARKER;
+        let sql = format!("CREATE TABLE Foo ();\n{marker}\nALTER TABLE Foo ADD CONSTRAINT fk;");
+        let (pre, post) = split_schema_sql(&sql);
+        assert!(pre.contains("CREATE TABLE Foo"), "pre={pre:?}");
+        assert!(!pre.contains(marker), "marker must not be in pre");
+        assert!(post.contains("ALTER TABLE"), "post={post:?}");
+        assert!(!post.contains("CREATE TABLE"), "pre DDL must not leak into post");
+    }
+
+    #[test]
+    fn split_without_marker_returns_whole_sql_in_pre() {
+        let sql = "CREATE TABLE Foo ();\nCREATE TABLE Bar ();";
+        let (pre, post) = split_schema_sql(sql);
+        assert_eq!(pre, sql);
+        assert_eq!(post, "");
+    }
+
+    #[test]
+    fn split_empty_string() {
+        let (pre, post) = split_schema_sql("");
+        assert_eq!(pre, "");
+        assert_eq!(post, "");
+    }
 }

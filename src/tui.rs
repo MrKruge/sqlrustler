@@ -1,5 +1,5 @@
 /// sqlrustler TUI — cowboy-themed interactive interface.
-/// Launched when `sqlrustler` is run with no arguments.
+/// Launch with: `sqlrustler tui`
 /// After the user fills in all details and confirms, the TUI restores the terminal
 /// and hands off to the normal export/import/bench pipeline.
 use anyhow::{bail, Result};
@@ -25,13 +25,22 @@ const CYAN: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const ERR: Color = Color::Red;
 
-// ── ASCII banner ──────────────────────────────────────────────────────────────
-const BANNER_LINES: &[&str] = &[
-    r" ____  ___  __    ____  __  __  ____  ____  __    ____  ____",
-    r"(_  _)/ __)(  )  ( ___)(  )(  )/ ___)(_  _)(  )  ( ___)(  _ \",
-    r"  )(  \__ \ )(__  )__)  )(__)( \___ \ _)(_  )(__(  )__)  )   /",
-    r" (__) (___/(____)(____)(______)(____/(____)(____)(____)(_)\_)",
+// ── Logo art — cowboy hat over database cylinder with speed lines ─────────────
+// Matches the official SQLRustler logo: cowboy hat, DB cylinder, rightward dashes.
+const LOGO_ART: &[&str] = &[
+    r"          .·:''''':·.",
+    r"        .'  ★  SQL  '.",
+    r"       /   ─────────  \",
+    r"      /________________\",
+    r"              ││",
+    r"         ┌────╨────┐",
+    r"         │ ███████ │ ───",
+    r"         │ ███████ │──── ►",
+    r"         │ ███████ │ ───",
+    r"         └─────────┘",
 ];
+
+const BRAND_NAME: &str = "SQLRustler";
 const TAGLINE: &str = "BACKUP  ★  EXPORT  ★  RESTORE";
 
 // ── App state machine ─────────────────────────────────────────────────────────
@@ -247,9 +256,10 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     app.error_msg = None;
 
     match app.screen {
-        Screen::Welcome => {
-            app.screen = Screen::MainMenu;
-        }
+        Screen::Welcome => match code {
+            KeyCode::Esc | KeyCode::Char('q') => { app.should_quit = true; }
+            _ => { app.screen = Screen::MainMenu; }
+        },
 
         Screen::MainMenu => match code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -429,65 +439,121 @@ fn draw(app: &App, f: &mut Frame) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect) {
-    let banner_text: Vec<Line> = BANNER_LINES
-        .iter()
-        .map(|l| Line::from(Span::styled(*l, Style::default().fg(CYAN).add_modifier(Modifier::BOLD))))
-        .chain(std::iter::once(Line::from(Span::styled(
-            format!("{:^62}", TAGLINE),
-            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
-        ))))
-        .collect();
+    // Logo art on the left, brand name + tagline on the right
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(34), Constraint::Min(0)])
+        .split(area);
 
-    f.render_widget(
-        Paragraph::new(banner_text).alignment(Alignment::Center),
-        area,
-    );
+    // Left: cowboy hat + database art
+    let art: Vec<Line> = LOGO_ART
+        .iter()
+        .map(|l| Line::from(Span::styled(*l, Style::default().fg(CYAN))))
+        .collect();
+    f.render_widget(Paragraph::new(art).alignment(Alignment::Left), cols[0]);
+
+    // Right: brand name big + tagline
+    let right_lines = vec![
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  SQLRustler",
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Fast Azure SQL export & import",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "  Built in Rust. No ODBC. No limits.",
+            Style::default().fg(DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {TAGLINE}"),
+            Style::default().fg(GOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(right_lines), cols[1]);
 }
 
-fn draw_welcome(app: &App, f: &mut Frame, area: Rect) {
-    let _ = app;
+fn draw_welcome(_app: &App, f: &mut Frame, area: Rect) {
+    // Outer border
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GOLD))
+        .title(Span::styled(
+            " 🤠  SQLRustler ",
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+        ));
+    f.render_widget(outer, area);
+
+    // Split: logo (top), buttons (bottom)
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(20),
-            Constraint::Length(7),
-            Constraint::Length(2),
-            Constraint::Length(3),
-            Constraint::Min(0),
+            Constraint::Length(2),   // top padding
+            Constraint::Length(10),  // logo art + brand side-by-side
+            Constraint::Length(1),   // spacer
+            Constraint::Length(1),   // tagline
+            Constraint::Min(0),      // flex
+            Constraint::Length(3),   // buttons
         ])
-        .split(area);
+        .split(inner);
 
+    // Logo + brand name
     draw_banner(f, chunks[1]);
 
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("Howdy, partner! ", Style::default().fg(GOLD).add_modifier(Modifier::BOLD)),
-            Span::styled("Ready to wrangle some data?", Style::default().fg(Color::White)),
-        ]))
-        .alignment(Alignment::Center),
-        chunks[2],
-    );
-
+    // Tagline centred
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "Press any key to saddle up...",
-            Style::default().fg(DIM).add_modifier(Modifier::ITALIC),
+            TAGLINE,
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
         )))
         .alignment(Alignment::Center),
         chunks[3],
     );
+
+    // Buttons row
+    let btn_area = chunks[5];
+    let buttons = vec![
+        Line::from(vec![
+            Span::raw("          "),
+            Span::styled(
+                "  [ Enter ]  Saddle up  ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(CYAN)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("     "),
+            Span::styled(
+                "  [ Esc / q ]  Ride out  ",
+                Style::default().fg(DIM),
+            ),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(buttons).alignment(Alignment::Center), btn_area);
 }
 
 fn draw_main_menu(app: &App, f: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(7),
-            Constraint::Length(1),
-            Constraint::Length(8),
+            Constraint::Length(1),   // top padding
+            Constraint::Length(10),  // banner
+            Constraint::Length(1),   // spacer
+            Constraint::Length(8),   // menu
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(1),   // help
         ])
         .split(area);
 

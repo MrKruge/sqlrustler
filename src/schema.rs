@@ -481,3 +481,278 @@ fn is_excluded(schema: &str, table: &str, globs: &[String]) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    fn make_col(
+        name: &str,
+        sql_type: &str,
+        max_length: i16,
+        precision: u8,
+        scale: u8,
+        is_nullable: bool,
+        is_identity: bool,
+        identity_seed: Option<i64>,
+        identity_increment: Option<i64>,
+    ) -> ColumnInfo {
+        ColumnInfo {
+            name: name.to_string(),
+            sql_type: sql_type.to_string(),
+            precision,
+            scale,
+            max_length,
+            is_nullable,
+            is_identity,
+            identity_seed,
+            identity_increment,
+        }
+    }
+
+    fn make_table(schema: &str, name: &str, fqn: &str) -> TableInfo {
+        TableInfo {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            fqn: fqn.to_string(),
+            columns: vec![],
+            identity_columns: vec![],
+            create_ddl: String::new(),
+        }
+    }
+
+    fn make_fk(parent_fqn: &str, ref_fqn: &str) -> FkInfo {
+        FkInfo {
+            name: format!("fk_{}_{}", parent_fqn, ref_fqn),
+            parent_fqn: parent_fqn.to_string(),
+            ref_fqn: ref_fqn.to_string(),
+            alter_stmt: String::new(),
+            drop_stmt: String::new(),
+        }
+    }
+
+    // ── generate_create_ddl ───────────────────────────────────────────────────
+
+    #[test]
+    fn varchar_max_generates_varchar_max() {
+        let col = make_col("Description", "varchar", -1, 0, 0, true, false, None, None);
+        let ddl = generate_create_ddl("dbo", "Items", &[col]);
+        assert!(ddl.contains("varchar(MAX)"), "DDL: {ddl}");
+    }
+
+    #[test]
+    fn nvarchar_100_generates_nvarchar_100_from_max_length_200() {
+        // SQL Server stores nvarchar max_length in bytes; 100 chars = 200 bytes
+        let col = make_col("Title", "nvarchar", 200, 0, 0, true, false, None, None);
+        let ddl = generate_create_ddl("dbo", "Items", &[col]);
+        assert!(ddl.contains("nvarchar(100)"), "DDL: {ddl}");
+    }
+
+    #[test]
+    fn decimal_18_4_in_ddl() {
+        let col = make_col("Amount", "decimal", -1, 18, 4, true, false, None, None);
+        let ddl = generate_create_ddl("dbo", "Orders", &[col]);
+        assert!(ddl.contains("decimal(18,4)"), "DDL: {ddl}");
+    }
+
+    #[test]
+    fn identity_column_includes_identity_clause() {
+        let col = make_col("Id", "int", 4, 10, 0, false, true, Some(1), Some(1));
+        let ddl = generate_create_ddl("dbo", "Orders", &[col]);
+        assert!(ddl.contains("IDENTITY(1,1)"), "DDL: {ddl}");
+    }
+
+    #[test]
+    fn not_null_column_includes_not_null() {
+        let col = make_col("Code", "varchar", 50, 0, 0, false, false, None, None);
+        let ddl = generate_create_ddl("dbo", "Items", &[col]);
+        assert!(ddl.contains("NOT NULL"), "DDL: {ddl}");
+    }
+
+    #[test]
+    fn nullable_column_includes_null() {
+        let col = make_col("Note", "varchar", 500, 0, 0, true, false, None, None);
+        let ddl = generate_create_ddl("dbo", "Items", &[col]);
+        // Should contain NULL but not NOT NULL
+        let stripped = ddl.replace("NOT NULL", "");
+        assert!(stripped.contains("NULL"), "DDL: {ddl}");
+        assert!(!ddl.contains("NOT NULL"), "DDL: {ddl}");
+    }
+
+    // ── column_type_spec ──────────────────────────────────────────────────────
+
+    #[test]
+    fn col_type_decimal_10_2() {
+        let col = make_col("X", "decimal", -1, 10, 2, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "decimal(10,2)");
+    }
+
+    #[test]
+    fn col_type_varchar_100() {
+        let col = make_col("X", "varchar", 100, 0, 0, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "varchar(100)");
+    }
+
+    #[test]
+    fn col_type_varchar_max() {
+        let col = make_col("X", "varchar", -1, 0, 0, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "varchar(MAX)");
+    }
+
+    #[test]
+    fn col_type_nvarchar_100_from_200_bytes() {
+        let col = make_col("X", "nvarchar", 200, 0, 0, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "nvarchar(100)");
+    }
+
+    #[test]
+    fn col_type_nvarchar_max() {
+        let col = make_col("X", "nvarchar", -1, 0, 0, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "nvarchar(MAX)");
+    }
+
+    #[test]
+    fn col_type_datetime2_scale7() {
+        let col = make_col("X", "datetime2", 8, 0, 7, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "datetime2(7)");
+    }
+
+    #[test]
+    fn col_type_datetime2_scale0_no_suffix() {
+        let col = make_col("X", "datetime2", 6, 0, 0, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "datetime2");
+    }
+
+    #[test]
+    fn col_type_int_passes_through() {
+        let col = make_col("X", "int", 4, 10, 0, true, false, None, None);
+        assert_eq!(column_type_spec(&col), "int");
+    }
+
+    // ── topo_sort ─────────────────────────────────────────────────────────────
+
+    fn fqns(sorted: &[TableInfo]) -> Vec<&str> {
+        sorted.iter().map(|t| t.fqn.as_str()).collect()
+    }
+
+    #[test]
+    fn topo_sort_no_fks_all_tables_present() {
+        let tables = vec![
+            make_table("dbo", "A", "[dbo].[A]"),
+            make_table("dbo", "B", "[dbo].[B]"),
+            make_table("dbo", "C", "[dbo].[C]"),
+        ];
+        let sorted = topo_sort(tables, &[]);
+        assert_eq!(sorted.len(), 3);
+        let names = fqns(&sorted);
+        assert!(names.contains(&"[dbo].[A]"));
+        assert!(names.contains(&"[dbo].[B]"));
+        assert!(names.contains(&"[dbo].[C]"));
+    }
+
+    #[test]
+    fn topo_sort_a_depends_on_b_b_comes_first() {
+        let tables = vec![
+            make_table("dbo", "A", "[dbo].[A]"),
+            make_table("dbo", "B", "[dbo].[B]"),
+        ];
+        // A → B means A has FK referencing B → B must come before A
+        let fks = vec![make_fk("[dbo].[A]", "[dbo].[B]")];
+        let sorted = topo_sort(tables, &fks);
+        let names = fqns(&sorted);
+        let pos_a = names.iter().position(|&x| x == "[dbo].[A]").unwrap();
+        let pos_b = names.iter().position(|&x| x == "[dbo].[B]").unwrap();
+        assert!(pos_b < pos_a, "B must precede A; got order: {names:?}");
+    }
+
+    #[test]
+    fn topo_sort_three_table_chain() {
+        // A → B → C means C first, then B, then A
+        let tables = vec![
+            make_table("dbo", "A", "[dbo].[A]"),
+            make_table("dbo", "B", "[dbo].[B]"),
+            make_table("dbo", "C", "[dbo].[C]"),
+        ];
+        let fks = vec![
+            make_fk("[dbo].[A]", "[dbo].[B]"),
+            make_fk("[dbo].[B]", "[dbo].[C]"),
+        ];
+        let sorted = topo_sort(tables, &fks);
+        let names = fqns(&sorted);
+        let pos_a = names.iter().position(|&x| x == "[dbo].[A]").unwrap();
+        let pos_b = names.iter().position(|&x| x == "[dbo].[B]").unwrap();
+        let pos_c = names.iter().position(|&x| x == "[dbo].[C]").unwrap();
+        assert!(pos_c < pos_b, "C before B; order: {names:?}");
+        assert!(pos_b < pos_a, "B before A; order: {names:?}");
+    }
+
+    #[test]
+    fn topo_sort_diamond_d_comes_last_a_comes_first() {
+        // A→B, A→C, B→D, C→D  → D must be before B and C, A must be after B and C
+        let tables = vec![
+            make_table("dbo", "A", "[dbo].[A]"),
+            make_table("dbo", "B", "[dbo].[B]"),
+            make_table("dbo", "C", "[dbo].[C]"),
+            make_table("dbo", "D", "[dbo].[D]"),
+        ];
+        let fks = vec![
+            make_fk("[dbo].[A]", "[dbo].[B]"),
+            make_fk("[dbo].[A]", "[dbo].[C]"),
+            make_fk("[dbo].[B]", "[dbo].[D]"),
+            make_fk("[dbo].[C]", "[dbo].[D]"),
+        ];
+        let sorted = topo_sort(tables, &fks);
+        assert_eq!(sorted.len(), 4);
+        let names = fqns(&sorted);
+        let pos_a = names.iter().position(|&x| x == "[dbo].[A]").unwrap();
+        let pos_b = names.iter().position(|&x| x == "[dbo].[B]").unwrap();
+        let pos_c = names.iter().position(|&x| x == "[dbo].[C]").unwrap();
+        let pos_d = names.iter().position(|&x| x == "[dbo].[D]").unwrap();
+        // D must come before B and C; A must come after B and C
+        assert!(pos_d < pos_b, "D before B; order: {names:?}");
+        assert!(pos_d < pos_c, "D before C; order: {names:?}");
+        assert!(pos_b < pos_a, "B before A; order: {names:?}");
+        assert!(pos_c < pos_a, "C before A; order: {names:?}");
+    }
+
+    #[test]
+    fn topo_sort_self_referential_fk_appears_exactly_once() {
+        // A → A (self-ref) — self-referential FK; table must appear exactly once
+        let tables = vec![make_table("dbo", "A", "[dbo].[A]")];
+        let fks = vec![make_fk("[dbo].[A]", "[dbo].[A]")];
+        let sorted = topo_sort(tables, &fks);
+        let count = sorted.iter().filter(|t| t.fqn == "[dbo].[A]").count();
+        assert_eq!(count, 1, "self-ref table must appear exactly once");
+    }
+
+    // ── is_excluded ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn glob_tmp_star_matches_tmp_staging() {
+        assert!(is_excluded("dbo", "tmp_staging", &["tmp_*".to_string()]));
+    }
+
+    #[test]
+    fn glob_tmp_star_does_not_match_atmp() {
+        assert!(!is_excluded("dbo", "atmp", &["tmp_*".to_string()]));
+    }
+
+    #[test]
+    fn glob_log_star_matches_log_errors() {
+        assert!(is_excluded("dbo", "log_errors", &["log_*".to_string()]));
+    }
+
+    #[test]
+    fn empty_globs_never_excluded() {
+        assert!(!is_excluded("dbo", "tmp_staging", &[]));
+        assert!(!is_excluded("dbo", "anything", &[]));
+    }
+
+    #[test]
+    fn schema_qualified_glob_matches_full_name() {
+        // pattern "archive.*" matches schema-qualified "archive.OldOrders"
+        assert!(is_excluded("archive", "OldOrders", &["archive.*".to_string()]));
+    }
+}
