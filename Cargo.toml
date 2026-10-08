@@ -77,6 +77,8 @@ rpassword      = "7"
 which          = "6"
 regex          = "1"
 glob           = "0.3"
+ratatui = "0.30"
+crossterm = "0.28"
 
 [dev-dependencies]
 tokio-test     = "0.4"
