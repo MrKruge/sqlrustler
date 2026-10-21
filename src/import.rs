@@ -56,13 +56,17 @@ pub async fn run(args: ImportArgs) -> Result<()> {
             continue;
         }
 
-        let parquet_bytes = match archive.read_parquet(&entry.file_name) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("Skipping {}: {}", entry.table_fqn, e);
-                continue;
+        // Collect all part files (v1 archives have one, v2 chunked archives may have many)
+        let mut all_bytes: Vec<u8> = Vec::new();
+        for file_name in entry.all_file_names() {
+            match archive.read_parquet(file_name) {
+                Ok(b) => all_bytes.extend(b),
+                Err(e) => {
+                    tracing::warn!("Skipping part {} of {}: {}", file_name, entry.table_fqn, e);
+                }
             }
-        };
+        }
+        if all_bytes.is_empty() { continue; }
 
         let permit = semaphore.clone().acquire_owned().await?;
         let pool = pool.clone();
@@ -72,7 +76,7 @@ pub async fn run(args: ImportArgs) -> Result<()> {
 
         let handle = tokio::spawn(async move {
             let _permit = permit;
-            import_table(pool, table_fqn, parquet_bytes, batch_size, has_identity).await
+            import_table(pool, table_fqn, all_bytes, batch_size, has_identity).await
         });
         handles.push(handle);
     }

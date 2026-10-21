@@ -23,7 +23,7 @@ tokio          = { version = "1.53", features = ["full"] }
 futures        = "0.3"
 
 # SQL Server / TDS
-tiberius       = { version = "0.12", default-features = false, features = [
+tiberius       = { version = "0.13", default-features = false, features = [
     "tokio",
     "rustls",
     "tds73",
@@ -31,7 +31,7 @@ tiberius       = { version = "0.12", default-features = false, features = [
     "chrono",
 ] }
 bb8            = "0.9"
-bb8-tiberius   = { version = "0.16", features = ["tls", "tds73", "chrono"] }
+bb8-tiberius   = { path = "vendor/bb8-tiberius", features = ["tls", "tds73", "chrono"] }
 tokio-util     = { version = "0.7", features = ["compat"] }
 
 # Columnar / Parquet

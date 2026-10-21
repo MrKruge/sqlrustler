@@ -28,6 +28,11 @@ pub fn sql_to_arrow(type_name: &str, precision: u8, scale: u8, _max_length: i16)
         "time"                            => DataType::Time64(TimeUnit::Microsecond),
         "uniqueidentifier"                => DataType::FixedSizeBinary(16),
         "xml" | "json"                    => DataType::Utf8,
+        // sql_variant: tiberius cannot decode SSVariant from the wire;
+        // we CAST to NVARCHAR(MAX) in SELECT so no column is ever skipped.
+        "sql_variant"                     => DataType::Utf8,
+        // hierarchyid: CLR type; we call .ToString() in SELECT → string path like "/1/2/3/"
+        "hierarchyid"                     => DataType::Utf8,
         // Spatial types: serialize as WKB
         "geography" | "geometry"          => DataType::Binary,
         // Unknown types: serialize as string via CAST in SELECT
@@ -56,6 +61,10 @@ pub fn select_expr(col_name: &str, type_name: &str) -> Option<String> {
     let n = format!("[{col_name}]");
     match type_name.to_lowercase().as_str() {
         "xml"       => Some(format!("CAST({n} AS NVARCHAR(MAX))")),
+        // sql_variant: tiberius panics on SSVariant wire type; cast to string preserves all values.
+        "sql_variant" => Some(format!("CAST({n} AS NVARCHAR(MAX))")),
+        // hierarchyid: CLR type, tiberius can't decode; ToString() gives canonical path string e.g. "/1/2/3/"
+        "hierarchyid" => Some(format!("{n}.ToString()")),
         "geography" => Some(format!("{n}.STAsBinary()")),
         "geometry"  => Some(format!("{n}.STAsBinary()")),
         // timestamp/rowversion: cast to binary so tiberius returns raw bytes

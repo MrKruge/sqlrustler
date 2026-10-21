@@ -26,6 +26,13 @@ pub struct TableInfo {
     pub fqn: String,
     pub columns: Vec<ColumnInfo>,
     pub identity_columns: Vec<String>,
+    /// Best integer column to use for PK-range chunking.
+    /// Either the single IDENTITY column, or the first key column of the clustered
+    /// integer PK (for tables imported without IDENTITY, e.g. StackExchange data dumps).
+    pub chunk_key: Option<String>,
+    /// True only when chunk_key is backed by an actual index (safe to chunk).
+    /// False = fallback column name only — chunking would cause parallel full scans.
+    pub chunk_key_indexed: bool,
     /// CREATE TABLE DDL (without trailing GO)
     pub create_ddl: String,
 }
@@ -69,11 +76,28 @@ pub async fn extract(pool: &DbPool, exclude_globs: &[String]) -> Result<SchemaBu
         let fqn = format!("[{schema}].[{name}]");
         let columns = query_columns(&mut conn, &fqn).await?;
         let create_ddl = generate_create_ddl(&schema, &name, &columns);
-        let identity_columns = columns
+        let identity_columns: Vec<String> = columns
             .iter()
             .filter(|c| c.is_identity)
             .map(|c| c.name.clone())
             .collect();
+
+        // Determine the best column for PK-range chunking:
+        // 1. Single IDENTITY column (preferred — guaranteed unique, monotonic)
+        // 2. First key column of a single-column indexed integer PK
+        // 3. Fallback: unindexed column named 'Id' (NOT safe to chunk — parallel full scans)
+        let (chunk_key, chunk_key_indexed) = if identity_columns.len() == 1 {
+            // IDENTITY columns always have a clustered index by convention
+            (Some(identity_columns[0].clone()), true)
+        } else {
+            let indexed = query_clustered_int_pk(&mut conn, &fqn).await?;
+            if indexed.is_some() {
+                (indexed, true)
+            } else {
+                let fallback = query_fallback_int_col(&mut conn, &fqn).await?;
+                (fallback, false)
+            }
+        };
 
         table_infos.push(TableInfo {
             schema: schema.clone(),
@@ -81,6 +105,8 @@ pub async fn extract(pool: &DbPool, exclude_globs: &[String]) -> Result<SchemaBu
             fqn,
             columns,
             identity_columns,
+            chunk_key,
+            chunk_key_indexed,
             create_ddl,
         });
     }
@@ -139,7 +165,8 @@ async fn query_columns(
     let sql = format!(
         "SELECT c.name, tp.name AS type_name, c.max_length, c.precision, c.scale, \
                 c.is_nullable, c.is_identity, \
-                ic.seed_value, ic.increment_value \
+                CAST(ic.seed_value AS BIGINT) AS seed_value, \
+                CAST(ic.increment_value AS BIGINT) AS increment_value \
          FROM sys.columns c \
          JOIN sys.types tp ON tp.user_type_id = c.user_type_id \
          LEFT JOIN sys.identity_columns ic \
@@ -177,6 +204,66 @@ async fn query_columns(
         });
     }
     Ok(columns)
+}
+
+/// Returns the best integer column to use for PK-range chunking.
+/// Accepts: PK (clustered or non-clustered), unique clustered index, or any clustered index.
+/// Single-column only. Prefers: PK > unique > clustered. Covers StackExchange imports
+/// which use NONCLUSTERED PKs or bare clustered indexes without a formal PK constraint.
+async fn query_clustered_int_pk(
+    conn: &mut crate::connection::TiberiusClient,
+    table_fqn: &str,
+) -> Result<Option<String>> {
+    let sql = format!(
+        "SELECT TOP 1 c.name \
+         FROM sys.indexes i \
+         JOIN sys.index_columns ic \
+             ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+         JOIN sys.columns c \
+             ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+         JOIN sys.types tp ON tp.user_type_id = c.user_type_id \
+         WHERE i.object_id = OBJECT_ID('{table_fqn}') \
+           AND i.index_id > 0           -- exclude heap (index_id=0) \
+           AND ic.key_ordinal = 1 \
+           AND ic.is_descending_key = 0 \
+           AND tp.name IN ('int', 'bigint') \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM sys.index_columns ic2 \
+               WHERE ic2.object_id = i.object_id \
+                 AND ic2.index_id = i.index_id \
+                 AND ic2.key_ordinal = 2 \
+           ) \
+         ORDER BY \
+           CASE WHEN i.is_primary_key = 1 THEN 0 ELSE 1 END, \
+           CASE WHEN i.is_unique = 1 THEN 0 ELSE 1 END, \
+           CASE WHEN i.type = 1 THEN 0 ELSE 1 END, \
+           i.index_id ASC"
+    );
+    let rows = conn.query(&sql, &[]).await?.into_results().await?;
+    let col_name = rows.into_iter().flatten().next()
+        .and_then(|r| r.get::<&str, _>(0).map(|s| s.to_string()));
+    Ok(col_name)
+}
+
+/// Fallback for heap tables with no index: find a NOT NULL INT/BIGINT column named 'Id'
+/// or an IDENTITY column. chunk_key_indexed will be false — do NOT chunk these tables.
+async fn query_fallback_int_col(
+    conn: &mut crate::connection::TiberiusClient,
+    table_fqn: &str,
+) -> Result<Option<String>> {
+    let sql = format!(
+        "SELECT TOP 1 c.name \
+         FROM sys.columns c \
+         JOIN sys.types tp ON tp.user_type_id = c.user_type_id \
+         WHERE c.object_id = OBJECT_ID('{table_fqn}') \
+           AND c.is_nullable = 0 \
+           AND tp.name IN ('int', 'bigint') \
+           AND (c.is_identity = 1 OR LOWER(c.name) = 'id') \
+         ORDER BY c.is_identity DESC, c.column_id ASC"
+    );
+    let rows = conn.query(&sql, &[]).await?.into_results().await?;
+    Ok(rows.into_iter().flatten().next()
+        .and_then(|r| r.get::<&str, _>(0).map(|s| s.to_string())))
 }
 
 async fn query_fks(
@@ -519,6 +606,8 @@ mod tests {
             fqn: fqn.to_string(),
             columns: vec![],
             identity_columns: vec![],
+            chunk_key: None,
+            chunk_key_indexed: false,
             create_ddl: String::new(),
         }
     }

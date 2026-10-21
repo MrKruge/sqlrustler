@@ -21,11 +21,29 @@ pub struct Manifest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ManifestTable {
     pub table_fqn: String,
-    /// Relative path inside archive: "data/dbo_Orders.parquet"
+    /// Relative paths inside archive — one per part (chunked tables have >1).
+    /// v1 archives have `file_name` (single string); v2 uses `file_names`.
+    #[serde(default)]
+    pub file_names: Vec<String>,
+    /// Legacy v1 field — kept for backwards-compat reading; writers use file_names.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub file_name: String,
     pub row_count: u64,
     pub has_identity: bool,
     pub identity_columns: Vec<String>,
+}
+
+impl ManifestTable {
+    /// Returns all part file paths, handling both v1 (file_name) and v2 (file_names).
+    pub fn all_file_names(&self) -> Vec<&str> {
+        if !self.file_names.is_empty() {
+            self.file_names.iter().map(String::as_str).collect()
+        } else if !self.file_name.is_empty() {
+            vec![self.file_name.as_str()]
+        } else {
+            vec![]
+        }
+    }
 }
 
 // ── Archive writer ────────────────────────────────────────────────────────────
@@ -216,6 +234,7 @@ mod tests {
             source_database: "testdb".to_string(),
             tables: vec![ManifestTable {
                 table_fqn: "[dbo].[Orders]".to_string(),
+                file_names: vec![],
                 file_name: "data/dbo_Orders.parquet".to_string(),
                 row_count: 42,
                 has_identity: true,

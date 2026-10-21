@@ -7,9 +7,12 @@ mod cli;
 mod connection;
 mod export;
 mod import;
+mod monitor;
 mod parquet_writer;
+mod pressure;
 mod progress;
 mod schema;
+mod test_conn;
 mod tui;
 mod types;
 
@@ -27,9 +30,11 @@ async fn main() -> Result<()> {
     let cli = cli::Cli::parse_args();
 
     match cli.command {
-        cli::Command::Export(args) => export::run(args).await,
-        cli::Command::Import(args) => import::run(args).await,
-        cli::Command::Bench(args)  => bench::run(args).await,
-        cli::Command::Tui          => tui::run_tui().await,
+        cli::Command::Export(args)    => export::run(args).await,
+        cli::Command::Import(args)    => import::run(args).await,
+        cli::Command::Bench(args)     => bench::run(args).await,
+        cli::Command::Tui             => tui::run_tui().await,
+        cli::Command::Pressure(args)  => pressure::run(args).await,
+        cli::Command::Test(args)      => test_conn::run(args).await,
     }
 }

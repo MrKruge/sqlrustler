@@ -4,7 +4,7 @@ use arrow::datatypes::{DataType, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
 use chrono::Timelike;
 use parquet::arrow::ArrowWriter;
-use parquet::basic::Compression;
+use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use std::path::Path;
 use std::sync::Arc;
@@ -12,6 +12,56 @@ use tiberius::Row;
 
 use crate::schema::{ColumnInfo, TableInfo};
 use crate::types::build_arrow_schema;
+
+/// Pipelined writer that runs on a blocking thread, receiving row batches via channel.
+/// This decouples the async TDS reader from the CPU-bound Arrow conversion + Parquet compression.
+pub struct BlockingParquetWriter {
+    receiver: std::sync::mpsc::Receiver<Vec<Row>>,
+    writer: ArrowWriter<std::fs::File>,
+    schema: Arc<Schema>,
+    columns: Vec<ColumnInfo>,
+}
+
+impl BlockingParquetWriter {
+    pub fn new(
+        path: &Path,
+        table: &TableInfo,
+        compression_level: i32,
+        receiver: std::sync::mpsc::Receiver<Vec<Row>>,
+    ) -> Result<Self> {
+        let schema = Arc::new(build_arrow_schema(&table.columns));
+        let file = std::fs::File::create(path)
+            .with_context(|| format!("Failed to create parquet file: {}", path.display()))?;
+
+        let zstd = ZstdLevel::try_new(compression_level.clamp(1, 22))?;
+        // Set row group size to match batch_size so the ArrowWriter flushes incrementally
+        // rather than buffering the entire chunk (up to ~1M rows default) before close().
+        // This keeps peak memory per chunk bounded at ~batch_size rows.
+        // BlockingParquetWriter receives batches via channel so batch_size is the natural boundary.
+        let props = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(zstd))
+            .set_max_row_group_size(100_000)
+            .build();
+
+        let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
+            .context("Failed to create ArrowWriter")?;
+
+        Ok(Self { receiver, writer, schema, columns: table.columns.clone() })
+    }
+
+    /// Drain channel until closed, converting each batch to Parquet. Returns total rows written.
+    pub fn run(mut self) -> Result<u64> {
+        let mut rows_written = 0u64;
+        while let Ok(rows) = self.receiver.recv() {
+            let batch = rows_to_record_batch(&rows, &self.columns, self.schema.clone())
+                .context("Failed to convert rows to RecordBatch")?;
+            rows_written += batch.num_rows() as u64;
+            self.writer.write(&batch).context("Failed to write RecordBatch")?;
+        }
+        self.writer.close().context("Failed to close ArrowWriter")?;
+        Ok(rows_written)
+    }
+}
 
 pub struct ParquetTableWriter {
     writer: ArrowWriter<std::fs::File>,
@@ -23,13 +73,15 @@ pub struct ParquetTableWriter {
 }
 
 impl ParquetTableWriter {
-    pub fn new(path: &Path, table: &TableInfo, batch_size: usize) -> Result<Self> {
+    pub fn new(path: &Path, table: &TableInfo, batch_size: usize, compression_level: i32) -> Result<Self> {
         let schema = Arc::new(build_arrow_schema(&table.columns));
         let file = std::fs::File::create(path)
             .with_context(|| format!("Failed to create parquet file: {}", path.display()))?;
 
+        let zstd = ZstdLevel::try_new(compression_level.clamp(1, 22))?;
         let props = WriterProperties::builder()
-            .set_compression(Compression::ZSTD(Default::default()))
+            .set_compression(Compression::ZSTD(zstd))
+            .set_max_row_group_size(batch_size)
             .build();
 
         let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
@@ -65,8 +117,13 @@ impl ParquetTableWriter {
 
     fn flush_batch(&mut self) -> Result<()> {
         let rows = std::mem::take(&mut self.row_buffer);
-        let batch = rows_to_record_batch(&rows, &self.columns, self.schema.clone())
-            .context("Failed to convert rows to RecordBatch")?;
+        // rows_to_record_batch is CPU-bound (type conversion + Arrow allocation).
+        // Run it on the blocking thread pool so the async row-read loop isn't stalled.
+        let columns = self.columns.clone();
+        let schema = self.schema.clone();
+        let batch = std::thread::scope(|_| {
+            rows_to_record_batch(&rows, &columns, schema)
+        }).context("Failed to convert rows to RecordBatch")?;
         self.rows_written += batch.num_rows() as u64;
         self.writer.write(&batch).context("Failed to write RecordBatch")?;
         Ok(())
@@ -123,7 +180,11 @@ fn rows_to_record_batch(
             }
 
             DataType::Utf8 => {
-                let mut b = StringBuilder::with_capacity(rows.len(), rows.len() * 32);
+                // Size the value buffer from the column's max_length metadata.
+                // max_length == -1 means MAX (nvarchar(max)/varchar(max)/text) —
+                // assume 500 bytes avg to avoid constant reallocation on LOB columns.
+                let avg_bytes = if col_info.max_length < 0 { 500 } else { col_info.max_length.max(8) as usize };
+                let mut b = StringBuilder::with_capacity(rows.len(), rows.len() * avg_bytes);
                 for row in rows {
                     match row.get::<&str, _>(col_idx) {
                         Some(v) => b.append_value(v),
@@ -194,7 +255,8 @@ fn rows_to_record_batch(
 
             // Fallback for unknown types
             _ => {
-                let mut b = StringBuilder::with_capacity(rows.len(), rows.len() * 32);
+                let avg_bytes = if col_info.max_length < 0 { 500 } else { col_info.max_length.max(8) as usize };
+                let mut b = StringBuilder::with_capacity(rows.len(), rows.len() * avg_bytes);
                 for row in rows {
                     match row.get::<&str, _>(col_idx) {
                         Some(v) => b.append_value(v),
@@ -270,5 +332,8 @@ fn build_timestamp_col(rows: &[Row], col_idx: usize, sql_type: &str) -> Result<A
         }
     }
 
-    Ok(Arc::new(b.finish()))
+    Ok(Arc::new(
+        b.finish()
+            .with_timezone_opt(Some(Arc::from("UTC"))),
+    ))
 }

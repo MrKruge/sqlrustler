@@ -25,22 +25,6 @@ const CYAN: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const ERR: Color = Color::Red;
 
-// ── Logo art — cowboy hat over database cylinder with speed lines ─────────────
-// Matches the official SQLRustler logo: cowboy hat, DB cylinder, rightward dashes.
-const LOGO_ART: &[&str] = &[
-    r"          .·:''''':·.",
-    r"        .'  ★  SQL  '.",
-    r"       /   ─────────  \",
-    r"      /________________\",
-    r"              ││",
-    r"         ┌────╨────┐",
-    r"         │ ███████ │ ───",
-    r"         │ ███████ │──── ►",
-    r"         │ ███████ │ ───",
-    r"         └─────────┘",
-];
-
-const BRAND_NAME: &str = "SQLRustler";
 const TAGLINE: &str = "BACKUP  ★  EXPORT  ★  RESTORE";
 
 // ── App state machine ─────────────────────────────────────────────────────────
@@ -439,43 +423,28 @@ fn draw(app: &App, f: &mut Frame) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect) {
-    // Logo art on the left, brand name + tagline on the right
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(34), Constraint::Min(0)])
-        .split(area);
-
-    // Left: cowboy hat + database art
-    let art: Vec<Line> = LOGO_ART
-        .iter()
-        .map(|l| Line::from(Span::styled(*l, Style::default().fg(CYAN))))
-        .collect();
-    f.render_widget(Paragraph::new(art).alignment(Alignment::Left), cols[0]);
-
-    // Right: brand name big + tagline
-    let right_lines = vec![
-        Line::from(""),
+    let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  SQLRustler",
+            "SQLRustler",
             Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  Fast Azure SQL export & import",
+            "Fast Azure SQL export & import",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "  Built in Rust. No ODBC. No limits.",
+            "Built in Rust. No ODBC. No limits.",
             Style::default().fg(DIM),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            format!("  {TAGLINE}"),
+            TAGLINE,
             Style::default().fg(GOLD),
         )),
     ];
-    f.render_widget(Paragraph::new(right_lines), cols[1]);
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
 
 fn draw_welcome(_app: &App, f: &mut Frame, area: Rect) {
@@ -501,29 +470,18 @@ fn draw_welcome(_app: &App, f: &mut Frame, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),   // top padding
-            Constraint::Length(10),  // logo art + brand side-by-side
+            Constraint::Length(8),   // brand banner
             Constraint::Length(1),   // spacer
-            Constraint::Length(1),   // tagline
             Constraint::Min(0),      // flex
             Constraint::Length(3),   // buttons
         ])
         .split(inner);
 
-    // Logo + brand name
+    // Brand name + tagline
     draw_banner(f, chunks[1]);
 
-    // Tagline centred
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            TAGLINE,
-            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
-        )))
-        .alignment(Alignment::Center),
-        chunks[3],
-    );
-
     // Buttons row
-    let btn_area = chunks[5];
+    let btn_area = chunks[4];
     let buttons = vec![
         Line::from(vec![
             Span::raw("          "),
@@ -549,7 +507,7 @@ fn draw_main_menu(app: &App, f: &mut Frame, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),   // top padding
-            Constraint::Length(10),  // banner
+            Constraint::Length(8),   // banner
             Constraint::Length(1),   // spacer
             Constraint::Length(8),   // menu
             Constraint::Min(0),
@@ -943,16 +901,12 @@ fn kv(key: &'static str, val: &str) -> Line<'static> {
 async fn execute_operation(app: App) -> Result<()> {
     use crate::cli::ConnectArgs;
 
-    // If Azure session auth, fetch token via az CLI
-    let (aad_token, user, password) = match app.auth_method {
-        AuthMethod::AzureSession => {
-            println!("\n🤠 Fetching Azure session token via az CLI...");
-            let token = get_azure_token().await?;
-            (Some(token), None, None)
-        }
+    // Build ConnectArgs — for Azure session auth, delegate token fetch to connection.rs
+    let (azure_auth, aad_token, user, password) = match app.auth_method {
+        AuthMethod::AzureSession => (true, None, None, None),
         AuthMethod::Manual => {
             let pass = if app.password.is_empty() { None } else { Some(app.password.clone()) };
-            (None, Some(app.user.clone()), pass)
+            (false, None, Some(app.user.clone()), pass)
         }
     };
 
@@ -962,6 +916,7 @@ async fn execute_operation(app: App) -> Result<()> {
         user,
         password,
         aad_token,
+        azure_auth,
         port: 1433,
         trust_cert: false,
     };
@@ -974,6 +929,7 @@ async fn execute_operation(app: App) -> Result<()> {
                 output: if app.output_path.is_empty() { None } else { Some(std::path::PathBuf::from(&app.output_path)) },
                 parallel: app.parallel.parse().unwrap_or_else(|_| num_cpus::get()),
                 batch_size: app.export_batch.parse().unwrap_or(10000),
+                pressure: None,
                 exclude_tables: if app.exclude_tables.is_empty() {
                     vec![]
                 } else {
@@ -981,6 +937,11 @@ async fn execute_operation(app: App) -> Result<()> {
                 },
                 schema_only: app.schema_only,
                 compression_level: app.compression.parse().unwrap_or(3),
+                validate: false,
+                table_parallelism: 4,
+                table_parallelism_threshold: 500_000,
+                monitor: false,
+                azure_resource_group: None,
             };
             println!("🤠 Rounding up rows from {}...\n", args.conn.host);
             crate::export::run(args).await?;
@@ -1018,47 +979,6 @@ async fn execute_operation(app: App) -> Result<()> {
     Ok(())
 }
 
-/// Shell out to `az account get-access-token` to get a bearer token for Azure SQL.
-async fn get_azure_token() -> Result<String> {
-    let output = tokio::process::Command::new("az")
-        .args([
-            "account",
-            "get-access-token",
-            "--resource",
-            "https://database.windows.net/",
-            "--query",
-            "accessToken",
-            "--output",
-            "tsv",
-        ])
-        .output()
-        .await;
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if token.is_empty() {
-                bail!("az returned an empty token. Are you logged in? Run: az login");
-            }
-            Ok(token)
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            bail!(
-                "az account get-access-token failed.\n\
-                 Make sure the Azure CLI is installed and you are logged in (`az login`).\n\
-                 Error: {stderr}"
-            )
-        }
-        Err(e) => {
-            bail!(
-                "Could not run `az`. Is the Azure CLI installed?\n\
-                 Install: https://aka.ms/installazurecliwindows\n\
-                 Error: {e}"
-            )
-        }
-    }
-}
 
 // ── Layout helpers ────────────────────────────────────────────────────────────
 

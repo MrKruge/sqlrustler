@@ -18,9 +18,15 @@ pub async fn run(args: BenchArgs) -> Result<()> {
         output: Some(output.clone()),
         parallel: num_cpus::get(),
         batch_size: 10_000,
+        pressure: None,
         exclude_tables: vec![],
         schema_only: false,
         compression_level: 3,
+        validate: false,
+        table_parallelism: 4,
+        table_parallelism_threshold: 500_000,
+        monitor: false,
+        azure_resource_group: None,
     };
 
     // ── sqlrustler timing ─────────────────────────────────────────────────────────
