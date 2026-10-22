@@ -147,9 +147,11 @@ async fn probe_network(
     table_fqn: &str,
     select_list: &str,
     batch_size: usize,
+    max_rows: Option<u64>,
 ) -> Result<NetworkProbeResult> {
     let mut conn = pool.get().await.context("failed to get connection for network probe")?;
-    let query = format!("SELECT {select_list} FROM {table_fqn} WITH (NOLOCK)");
+    let top = max_rows.map(|n| format!("TOP ({n}) ")).unwrap_or_default();
+    let query = format!("SELECT {top}{select_list} FROM {table_fqn} WITH (NOLOCK)");
 
     let t0 = Instant::now();
     let stream = conn.query(&query, &[]).await?.into_row_stream();
@@ -313,19 +315,35 @@ pub async fn run(args: PressureArgs) -> Result<()> {
         best
     };
 
-    // Build a lean SELECT list — use first 5 cols to keep row width manageable
-    let select_cols: Vec<String> = table.columns.iter().take(5).map(|c| {
+    // Lean SELECT list by default (first 5 cols); --columns overrides
+    let chosen: Vec<&crate::schema::ColumnInfo> = match args.columns.as_deref() {
+        None => table.columns.iter().take(5).collect(),
+        Some(s) if s.eq_ignore_ascii_case("all") => table.columns.iter().collect(),
+        Some(s) => {
+            let mut v = Vec::new();
+            for name in s.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                v.push(
+                    table.columns.iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(name))
+                        .with_context(|| format!("Column '{name}' not found in {}", table.fqn))?,
+                );
+            }
+            v
+        }
+    };
+    let select_cols: Vec<String> = chosen.iter().map(|c| {
         select_expr(&c.name, &c.sql_type)
             .unwrap_or_else(|| format!("[{}]", c.name))
     }).collect();
     let select_list = select_cols.join(", ");
+    println!("  columns: {}", chosen.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
 
     // ── Phase 2: network probe ────────────────────────────────────────────────
     if !args.skip_network {
         header(&format!("Phase 2 — Network pipe  (table: {})", table.fqn));
         println!("  Streaming all rows over a single connection. Ctrl-C to abort.");
 
-        let result = probe_network(&pool, &table.fqn, &select_list, args.batch_size).await?;
+        let result = probe_network(&pool, &table.fqn, &select_list, args.batch_size, args.max_rows).await?;
 
         result_row("table",        &table.fqn);
         result_row("rows received", &format!("{}", result.rows));

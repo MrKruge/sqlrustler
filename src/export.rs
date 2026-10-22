@@ -220,8 +220,8 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
                                     // always returns false) but dead to tiberius.
                                     let delay = 130 + 30 * (attempt as u64 - 1);
                                     tracing::warn!(
-                                        "{} chunk {}: timed out, retry {}/{} in {}s",
-                                        table.fqn, i, attempt, MAX_RETRIES - 1, delay
+                                        "{} chunk {}: failed ({:#}), retry {}/{} in {}s",
+                                        table.fqn, i, last_err.as_ref().unwrap(), attempt, MAX_RETRIES - 1, delay
                                     );
                                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                                     pb.reset();
@@ -305,7 +305,11 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
             let compression_level = args.compression_level;
             let pb = make_export_bar(&multi, &table.fqn);
             let is_lob_range_table = true; // by construction
-            let table_sem_size = 2usize; // proven sweet spot: 2 concurrent LOB range scans
+            let table_sem_size = std::env::var("SQLRUSTLER_LOB_RANGE_PARALLEL")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|&n| n >= 1)
+                .unwrap_or(4);
             let table_sem = Arc::new(tokio::sync::Semaphore::new(table_sem_size));
             let lob_sem = lob_sem.clone();
             let small_sem = small_sem.clone();
@@ -328,8 +332,8 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
                         for attempt in 0..MAX_RETRIES {
                             if attempt > 0 {
                                 let delay = 130 + 30 * (attempt as u64 - 1);
-                                tracing::warn!("{} chunk {}: timed out, retry {}/{} in {}s",
-                                    table.fqn, i, attempt, MAX_RETRIES - 1, delay);
+                                tracing::warn!("{} chunk {}: failed ({:#}), retry {}/{} in {}s",
+                                    table.fqn, i, last_err.as_ref().unwrap(), attempt, MAX_RETRIES - 1, delay);
                                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                                 pb.reset();
                             }

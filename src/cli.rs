@@ -242,6 +242,14 @@ pub struct PressureArgs {
     #[arg(long)]
     pub table: Option<String>,
 
+    /// Comma-separated columns to select (or "all"); default is the first 5 columns
+    #[arg(long)]
+    pub columns: Option<String>,
+
+    /// Stop the network probe after this many rows (TOP n)
+    #[arg(long)]
+    pub max_rows: Option<u64>,
+
     /// Max concurrent connections to try during the DB ramp phase
     #[arg(long, default_value = "32")]
     pub max_connections: usize,
