@@ -148,10 +148,12 @@ async fn probe_network(
     select_list: &str,
     batch_size: usize,
     max_rows: Option<u64>,
+    filter: Option<String>,
 ) -> Result<NetworkProbeResult> {
     let mut conn = pool.get().await.context("failed to get connection for network probe")?;
     let top = max_rows.map(|n| format!("TOP ({n}) ")).unwrap_or_default();
-    let query = format!("SELECT {top}{select_list} FROM {table_fqn} WITH (NOLOCK)");
+    let wh = filter.map(|f| format!(" WHERE {f}")).unwrap_or_default();
+    let query = format!("SELECT {top}{select_list} FROM {table_fqn} WITH (NOLOCK){wh}");
 
     let t0 = Instant::now();
     let stream = conn.query(&query, &[]).await?.into_row_stream();
@@ -338,12 +340,23 @@ pub async fn run(args: PressureArgs) -> Result<()> {
     let select_list = select_cols.join(", ");
     println!("  columns: {}", chosen.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
 
+    let probe_filter: Option<String> = match args.id_range.as_deref() {
+        None => None,
+        Some(s) => {
+            let (lo, hi) = s.split_once(':').context("--id-range must be LO:HI")?;
+            let lo: i64 = lo.trim().parse().context("--id-range LO must be an integer")?;
+            let hi: i64 = hi.trim().parse().context("--id-range HI must be an integer")?;
+            let pk = table.chunk_key.clone().context("table has no chunk key for --id-range")?;
+            Some(format!("[{pk}] BETWEEN {lo} AND {hi}"))
+        }
+    };
+
     // ── Phase 2: network probe ────────────────────────────────────────────────
     if !args.skip_network {
         header(&format!("Phase 2 — Network pipe  (table: {})", table.fqn));
         println!("  Streaming all rows over a single connection. Ctrl-C to abort.");
 
-        let result = probe_network(&pool, &table.fqn, &select_list, args.batch_size, args.max_rows).await?;
+        let result = probe_network(&pool, &table.fqn, &select_list, args.batch_size, args.max_rows, probe_filter.clone()).await?;
 
         result_row("table",        &table.fqn);
         result_row("rows received", &format!("{}", result.rows));

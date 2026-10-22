@@ -213,12 +213,9 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
                             let mut last_err = None;
                             for attempt in 0..MAX_RETRIES {
                                 if attempt > 0 {
-                                    // Delay must exceed tiberius command_timeout (120s) so that
-                                    // cancelled connections are evicted from the pool before we
-                                    // call pool.get() again. Without this, pool.get() is handed
-                                    // back zombie connections that are "valid" to bb8 (has_broken
-                                    // always returns false) but dead to tiberius.
-                                    let delay = 130 + 30 * (attempt as u64 - 1);
+                                    // Streams use dedicated connections, so there is nothing to evict;
+                                    // a short backoff is enough.
+                                    let delay = 5 * attempt as u64;
                                     tracing::warn!(
                                         "{} chunk {}: failed ({:#}), retry {}/{} in {}s",
                                         table.fqn, i, last_err.as_ref().unwrap(), attempt, MAX_RETRIES - 1, delay
@@ -331,7 +328,7 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
                         let mut last_err = None;
                         for attempt in 0..MAX_RETRIES {
                             if attempt > 0 {
-                                let delay = 130 + 30 * (attempt as u64 - 1);
+                                let delay = 5 * attempt as u64;
                                 tracing::warn!("{} chunk {}: failed ({:#}), retry {}/{} in {}s",
                                     table.fqn, i, last_err.as_ref().unwrap(), attempt, MAX_RETRIES - 1, delay);
                                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
@@ -552,11 +549,13 @@ async fn export_table(
         None => "single".to_string(),
     };
     tracing::debug!("{} [{}]: acquiring connection", table.fqn, chunk_label);
+    // Dedicated connection (outside the pool, closed on drop): a stalled stream can never
+    // leave a half-dead connection in the pool for the next attempt to be handed.
     let mut conn = tokio::time::timeout(
         std::time::Duration::from_secs(90),
-        pool.get()
+        pool.dedicated_connection()
     ).await
-    .map_err(|_| anyhow::anyhow!("{} [{}]: pool.get() timed out after 90s", table.fqn, chunk_label))??;
+    .map_err(|_| anyhow::anyhow!("{} [{}]: connect timed out after 90s", table.fqn, chunk_label))??;
     tracing::debug!("{} [{}]: connection acquired, building query", table.fqn, chunk_label);
 
     // Build SELECT list with CAST overrides for special types
@@ -702,6 +701,18 @@ async fn plan_chunks(
         c.max_length == -1
         || matches!(c.sql_type.to_lowercase().as_str(), "text" | "ntext" | "image")
     });
+
+    // Heap LOB tables are range-chunked with NTILE; more, smaller chunks keep every
+    // stream busy to the end instead of leaving a 1-2 stream tail.
+    let n = if has_lob {
+        std::env::var("SQLRUSTLER_LOB_CHUNKS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&c| c >= 1)
+            .unwrap_or(n)
+    } else {
+        n
+    };
 
     // Fast row-count estimate from partition stats (no table scan)
     let mut conn = pool.get().await?;

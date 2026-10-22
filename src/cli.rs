@@ -250,6 +250,10 @@ pub struct PressureArgs {
     #[arg(long)]
     pub max_rows: Option<u64>,
 
+    /// Restrict the network probe to LO:HI on the table's chunk key (e.g. 4019374:4203370)
+    #[arg(long)]
+    pub id_range: Option<String>,
+
     /// Max concurrent connections to try during the DB ramp phase
     #[arg(long, default_value = "32")]
     pub max_connections: usize,
