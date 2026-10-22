@@ -236,13 +236,10 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
                                     None
                                 };
                                 tracing::debug!("{} chunk {}: permit(s) acquired, starting export", table.fqn, i);
-                                // LOB columns (nvarchar(max) etc.) stream at ~1k rows/s — a 932k-row
-                                // chunk needs ~930s. Non-LOB tables are fast enough for 300s.
-                                let has_lob = table.columns.iter().any(|c| {
-                                    c.max_length == -1
-                                    || matches!(c.sql_type.to_lowercase().as_str(), "text" | "ntext" | "image")
-                                });
-                                let chunk_timeout = std::time::Duration::from_secs(if has_lob { 1200 } else { 300 });
+                                // Wall-clock cap is a backstop only; real stalls are caught by the
+                                // 300s idle row-stream timeout and the 120s command timeout. A healthy
+                                // chunk under 8-way contention (e.g. Comments, ~250s) can exceed 300s.
+                                let chunk_timeout = std::time::Duration::from_secs(1200);
                                 match tokio::time::timeout(chunk_timeout, export_table(
                                     pool.clone(), table.clone(), tmp_path.clone(),
                                     batch_size, compression_level, Some(chunk.clone()), i, pb.clone(),
@@ -284,15 +281,18 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
 
         // Await all phase-1 tables before starting phase-2 (LOB-range tables).
         // This gives Posts an uncontested buffer pool — critical for LOB throughput.
-        for handle in handles {
-            let stats = handle.await??;
-            for stat in stats {
-                tracing::info!(
-                    "  ✓ {} — {} rows ({}/{} tables done)",
-                    stat.table_fqn, stat.rows,
-                    table_stats.len() + 1, bundle.tables.len()
-                );
-                table_stats.push(stat);
+        let overlap_lob = std::env::var("SQLRUSTLER_OVERLAP_LOB").map(|v| v == "1").unwrap_or(false);
+        if !overlap_lob {
+            for handle in handles.drain(..) {
+                let stats = handle.await??;
+                for stat in stats {
+                    tracing::info!(
+                        "  ✓ {} — {} rows ({}/{} tables done)",
+                        stat.table_fqn, stat.rows,
+                        table_stats.len() + 1, bundle.tables.len()
+                    );
+                    table_stats.push(stat);
+                }
             }
         }
 
@@ -378,6 +378,17 @@ pub async fn run(mut args: ExportArgs) -> Result<()> {
                 }])
             });
             lob_handles.push(handle);
+        }
+        for handle in handles {
+            let stats = handle.await??;
+            for stat in stats {
+                tracing::info!(
+                    "  ✓ {} — {} rows ({}/{} tables done)",
+                    stat.table_fqn, stat.rows,
+                    table_stats.len() + 1, bundle.tables.len()
+                );
+                table_stats.push(stat);
+            }
         }
         for handle in lob_handles {
             let stats = handle.await??;
