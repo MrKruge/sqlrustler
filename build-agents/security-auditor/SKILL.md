@@ -47,7 +47,7 @@ SQL injection surface, TLS configuration, and secret leakage risk.
 - No pinning or validation beyond TLS — acceptable for Azure SQL.
 
 ### Archive integrity
-- `.rustler` archives are tar.zst — no signature or checksum beyond zstd frame integrity.
+- `.sqlrustler` archives are tar.zst — no signature or checksum beyond zstd frame integrity.
   A tampered archive could:
   - Inject SQL via malicious `table_fqn` in manifest (see above)
   - Inject DDL via modified `schema.sql`

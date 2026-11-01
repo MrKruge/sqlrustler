@@ -40,7 +40,7 @@ sqlrustler/
 ## Archive format
 
 ```
-mydb.rustler  (tar + zstd)
+mydb.sqlrustler  (tar + zstd)
 ├── manifest.json    version, table list, row counts, identity columns
 ├── schema.sql       DDL split at "-- SQLRUSTLER_SECTION: POST_DATA"
 └── data/
@@ -55,4 +55,4 @@ mydb.rustler  (tar + zstd)
 4. FK constraints are dropped before data load and restored after (POST_DATA section).
 5. `SET IDENTITY_INSERT ON/OFF` is session-scoped — each parallel task uses its own connection.
 6. All `todo!()` macros must be resolved before v1.0 release.
-7. The `.rustler` archive format is append-only in v1 — no random-access modification.
+7. The `.sqlrustler` archive format is append-only in v1 — no random-access modification.

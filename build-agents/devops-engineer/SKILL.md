@@ -76,7 +76,7 @@ allow = ["MIT", "Apache-2.0", "ISC", "Unicode-DFS-2016"]
 ```
 
 ### Release naming
-Archive files default to `<database>_<timestamp>.rustler`.
+Archive files default to `<database>_<timestamp>.sqlrustler`.
 Binary release artifacts should be named:
 ```
 sqlrustler-v0.1.0-x86_64-apple-darwin.tar.gz

@@ -143,7 +143,7 @@ export SQLRUSTLER_AAD_TOKEN=$(az account get-access-token \
 sqlrustler export \
   -H myserver.database.windows.net \
   -d mydb \
-  -o mydb.rustler
+  -o mydb.sqlrustler
 ```
 
 ### Method 2 — SQL Server auth
@@ -154,7 +154,7 @@ sqlrustler export \
   -d mydb \
   -u myuser \
   -p mypassword \
-  -o mydb.rustler
+  -o mydb.sqlrustler
 ```
 
 > **Tip:** Use environment variables instead of `-p` to keep the password out of
@@ -165,7 +165,7 @@ sqlrustler export \
 > export SQLRUSTLER_USER=myuser
 > export SQLRUSTLER_PASSWORD=mypassword
 >
-> sqlrustler export -o mydb.rustler
+> sqlrustler export -o mydb.sqlrustler
 > ```
 
 ---
@@ -200,7 +200,7 @@ sqlrustler
 ```
 
 1. Press any key at the welcome screen
-2. Select **Export database to .rustler**
+2. Select **Export database to .sqlrustler**
 3. On the connection screen, press **[F1]** for Azure session or **[F2]** for manual
 4. Enter your **host** and **database** name, press **Enter**
 5. Adjust options (or just press **Enter** to accept defaults)
@@ -212,7 +212,7 @@ sqlrustler
 sqlrustler export \
   -H krugesql.database.windows.net \
   -d AdventureWorks \
-  -o adventureworks.rustler
+  -o adventureworks.sqlrustler
 ```
 
 Expected output:
@@ -222,18 +222,18 @@ Expected output:
   Exporting dbo.SalesOrderHeader  ████████████ 31,465 rows  2.1s
   Exporting dbo.SalesOrderDetail  ████████████ 121,317 rows 4.8s
   ...
-2026-10-08T12:00:18Z  INFO Export complete: 3,124,551 rows in 17.2s → adventureworks.rustler (142 MB)
+2026-10-08T12:00:18Z  INFO Export complete: 3,124,551 rows in 17.2s → adventureworks.sqlrustler (142 MB)
 ```
 
 ---
 
 ## Inspect an archive
 
-The `.rustler` format is plain tar + zstd. You can inspect it without SQLRustler:
+The `.sqlrustler` format is plain tar + zstd. You can inspect it without SQLRustler:
 
 ```bash
 # List contents
-zstd -d mydb.rustler -o mydb.tar && tar -tf mydb.tar
+zstd -d mydb.sqlrustler -o mydb.tar && tar -tf mydb.tar
 
 # Read the manifest
 tar -xOf mydb.tar manifest.json | python3 -m json.tool
@@ -251,14 +251,14 @@ tar -xOf mydb.tar schema.sql | head -60
 sqlrustler export \
   -H source.database.windows.net \
   -d mydb \
-  -o mydb.rustler
+  -o mydb.sqlrustler
 
 # 2. Import to a target database (must exist — or use --drop-existing to create it)
 sqlrustler import \
   -H target.database.windows.net \
   -d mydb_restored \
   --drop-existing \
-  -i mydb.rustler
+  -i mydb.sqlrustler
 ```
 
 ---

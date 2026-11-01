@@ -29,7 +29,7 @@ sqlrustler does it differently:
 ## Archive format
 
 ```
-mydb_20261008T120000.rustler      (tar.zst internally)
+mydb_20261008T120000.sqlrustler      (tar.zst internally)
 ├── manifest.json                 version, table list, row counts, identity metadata
 ├── schema.sql                    full DDL — tables, views, procs, FKs
 └── data/
@@ -42,10 +42,10 @@ mydb_20261008T120000.rustler      (tar.zst internally)
 (CREATE TABLE, views, procs) runs before data load. Everything after (ALTER TABLE ADD
 CONSTRAINT) runs after — so FK constraints never block the parallel bulk insert.
 
-The `.rustler` format is a plain tar.zst. You can inspect it with standard tools:
+The `.sqlrustler` format is a plain tar.zst. You can inspect it with standard tools:
 
 ```bash
-zstd -d mydb.rustler -o mydb.tar
+zstd -d mydb.sqlrustler -o mydb.tar
 tar -tf mydb.tar
 cat <(tar -xOf mydb.tar manifest.json)
 ```
@@ -91,7 +91,7 @@ sqlrustler export \
   -d mydb \
   -u myuser \
   -p mypass \
-  -o mydb.rustler
+  -o mydb.sqlrustler
 
 # 2. Import it somewhere else
 sqlrustler import \
@@ -99,7 +99,7 @@ sqlrustler import \
   -d mydb_restored \
   -u myuser \
   -p mypass \
-  -i mydb.rustler
+  -i mydb.sqlrustler
 ```
 
 ---
@@ -113,7 +113,7 @@ sqlrustler export \
   -d mydb \
   -u myuser \
   -p mypass \
-  -o mydb.rustler
+  -o mydb.sqlrustler
 
 # Azure AD bearer token (recommended for Azure SQL)
 export SQLRUSTLER_AAD_TOKEN=$(az account get-access-token \
@@ -123,7 +123,7 @@ export SQLRUSTLER_AAD_TOKEN=$(az account get-access-token \
 sqlrustler export \
   -H myserver.database.windows.net \
   -d mydb \
-  -o mydb.rustler
+  -o mydb.sqlrustler
 
 # Use env vars instead of flags (keeps credentials out of shell history)
 export SQLRUSTLER_HOST=myserver.database.windows.net
@@ -131,19 +131,19 @@ export SQLRUSTLER_DATABASE=mydb
 export SQLRUSTLER_USER=myuser
 export SQLRUSTLER_PASSWORD=mypass
 
-sqlrustler export -o mydb.rustler
+sqlrustler export -o mydb.sqlrustler
 
 # Crank up parallelism for large databases
-sqlrustler export -H ... -d ... -j 16 --batch-size 50000 -o mydb.rustler
+sqlrustler export -H ... -d ... -j 16 --batch-size 50000 -o mydb.sqlrustler
 
 # Schema DDL only — no row data
-sqlrustler export -H ... -d ... --schema-only -o mydb_schema.rustler
+sqlrustler export -H ... -d ... --schema-only -o mydb_schema.sqlrustler
 
 # Exclude staging and temp tables
-sqlrustler export -H ... -d ... --exclude-tables "tmp_*,staging_*,log_*" -o mydb.rustler
+sqlrustler export -H ... -d ... --exclude-tables "tmp_*,staging_*,log_*" -o mydb.sqlrustler
 
 # Maximum zstd compression (slower export, smaller archive)
-sqlrustler export -H ... -d ... --compression-level 19 -o mydb.rustler
+sqlrustler export -H ... -d ... --compression-level 19 -o mydb.sqlrustler
 ```
 
 ### Export flags
@@ -155,14 +155,21 @@ sqlrustler export -H ... -d ... --compression-level 19 -o mydb.rustler
 | `-u, --user` | `SQLRUSTLER_USER` | — | SQL login username |
 | `-p, --password` | `SQLRUSTLER_PASSWORD` | — | SQL login password (interactive prompt if omitted) |
 | `--aad-token` | `SQLRUSTLER_AAD_TOKEN` | — | Azure AD bearer token (alternative to user/password) |
+| `--azure-auth` | — | `false` | Fetch the token from the current `az login` session |
 | `--port` | — | `1433` | TCP port |
-| `--trust-cert` | — | `false` | Trust self-signed cert (dev only, never against production) |
-| `-o, --output` | — | `<db>_<timestamp>.rustler` | Output archive path |
-| `-j, --parallel` | — | CPU count | Tables exported in parallel |
+| `--trust-cert` | — | `false` | Trust self-signed cert (dev only; refused for Azure SQL hosts and with AAD tokens) |
+| `-o, --output` | — | `<db>_<timestamp>.sqlrustler` | Output archive path |
+| `-j, --parallel` | — | `10` | Tables exported in parallel |
 | `--batch-size` | — | `10000` | Rows per Parquet row group |
 | `--exclude-tables` | — | — | Comma-separated glob patterns (e.g. `tmp_*,log_*`) |
 | `--schema-only` | — | `false` | Export DDL only, no row data |
 | `--compression-level` | — | `3` | zstd level: 1 = fastest, 22 = smallest |
+| `--pressure` | — | — | Preset `light` / `medium` / `full`; overrides `--parallel` and `--batch-size` |
+| `--table-parallelism` | — | `8` | Concurrent connections per large table (PK-range chunks); `1` disables |
+| `--table-parallelism-threshold` | — | `500000` | Row count above which a table is chunked |
+| `--validate` | — | `false` | After export, compare archive row counts with the live database |
+| `--monitor` | — | `false` | Sample local and Azure SQL metrics during export and print a timeline |
+| `--azure-resource-group` | — | discovered | Resource group used by `--monitor` (falls back to `az sql server list`) |
 
 ---
 
@@ -175,16 +182,16 @@ sqlrustler import \
   -d mydb_restored \
   -u myuser \
   -p mypass \
-  -i mydb.rustler
+  -i mydb.sqlrustler
 
 # Drop and recreate the target database first (clean slate)
-sqlrustler import -H ... -d mydb_restored ... --drop-existing -i mydb.rustler
+sqlrustler import -H ... -d mydb_restored ... --drop-existing -i mydb.sqlrustler
 
 # Data only — schema already exists on the target, just load rows
-sqlrustler import -H ... -d mydb_restored ... --data-only -i mydb.rustler
+sqlrustler import -H ... -d mydb_restored ... --data-only -i mydb.sqlrustler
 
 # Tune parallelism
-sqlrustler import -H ... -d ... -j 8 --batch-size 2000 -i mydb.rustler
+sqlrustler import -H ... -d ... -j 8 --batch-size 2000 -i mydb.sqlrustler
 ```
 
 ### Import flags
@@ -196,10 +203,11 @@ sqlrustler import -H ... -d ... -j 8 --batch-size 2000 -i mydb.rustler
 | `-u, --user` | `SQLRUSTLER_USER` | — | SQL login username |
 | `-p, --password` | `SQLRUSTLER_PASSWORD` | — | SQL login password |
 | `--aad-token` | `SQLRUSTLER_AAD_TOKEN` | — | Azure AD bearer token |
+| `--azure-auth` | — | `false` | Fetch the token from the current `az login` session |
 | `--port` | — | `1433` | TCP port |
 | `--trust-cert` | — | `false` | Trust self-signed cert |
 | `-i, --input` | — | required | Archive to import |
-| `-j, --parallel` | — | CPU count | Tables imported in parallel |
+| `-j, --parallel` | — | `10` | Tables imported in parallel |
 | `--batch-size` | — | `1000` | Rows per INSERT batch |
 | `--data-only` | — | `false` | Skip DDL, load data only |
 | `--drop-existing` | — | `false` | Drop and recreate the target database first |
@@ -240,9 +248,35 @@ sqlpackage         84.50       490 MB        5 MB/s
 
 ---
 
+## Diagnostics
+
+```bash
+# Check connectivity, bandwidth and local write speed before a big export
+sqlrustler test -H myserver.database.windows.net -d mydb --azure-auth
+
+# Ramp concurrency to find the connection ceiling (read-only)
+sqlrustler pressure -H myserver.database.windows.net -d mydb --azure-auth --max-connections 32
+```
+
+`test` accepts `--only`, `--bandwidth-rows` and `--destination-rows`. `pressure` accepts
+`--table`, `--columns`, `--max-rows`, `--id-range`, `--max-connections`, `--step-secs`,
+`--skip-local`, `--skip-network` and `--skip-db-ramp`. Run either with `--help` for details.
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `SQLRUSTLER_PACKET_SIZE` | TDS packet size override |
+| `SQLRUSTLER_OVERLAP_LOB` | `1` starts the large-LOB table alongside the other tables |
+| `SQLRUSTLER_LOB_RANGE_PARALLEL` | Concurrent range chunks for the large-LOB table |
+| `SQLRUSTLER_LOB_CHUNKS` | Number of range chunks for the large-LOB table |
+| `SQLRUSTLER_SKIP_DDL_CHECK` | `1` disables the import-side `schema.sql` allowlist (unsafe with untrusted archives) |
+
+---
+
 ## Authentication
 
-sqlrustler supports two auth methods:
+sqlrustler supports two auth methods (`--azure-auth` is a shortcut for the second):
 
 **SQL Server auth** — pass `-u` / `-p` flags or set `SQLRUSTLER_USER` / `SQLRUSTLER_PASSWORD`.
 If `--password` is omitted and no env var is set, sqlrustler prompts interactively (no echo).
@@ -254,7 +288,7 @@ export SQLRUSTLER_AAD_TOKEN=$(az account get-access-token \
   --resource https://database.windows.net/ \
   --query accessToken -o tsv)
 
-sqlrustler export -H myserver.database.windows.net -d mydb -o out.rustler
+sqlrustler export -H myserver.database.windows.net -d mydb -o out.sqlrustler
 ```
 
 > **Security note:** Prefer env vars over `-p` flags — flag values appear in shell history

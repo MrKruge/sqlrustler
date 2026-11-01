@@ -38,7 +38,7 @@ sqlrustler removes all three ceilings.
 │                              │                           │
 │                   ┌──────────▼──────────┐                │
 │                   │   tar + zstd         │                │
-│                   │   .rustler archive   │                │
+│                   │   .sqlrustler archive   │                │
 │                   │  manifest.json       │                │
 │                   │  schema.sql          │                │
 │                   │  data/*.parquet      │                │
@@ -224,7 +224,7 @@ certificate validation and is documented for development use only.
 
 ### Archive integrity
 
-`.rustler` archives have no cryptographic signature in v0.1. The zstd frame provides
+`.sqlrustler` archives have no cryptographic signature in v0.1. The zstd frame provides
 integrity against accidental corruption but not against tampering. Only import archives
 from trusted sources. Manifest signing is planned for v2.0.
 
