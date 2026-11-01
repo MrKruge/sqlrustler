@@ -1,4 +1,8 @@
 /target
 *.rustler
+*.sqlrustler
 *.rustler.tmp
+*.sqlrustler.tmp
 .env
+.DS_Store
+*.log

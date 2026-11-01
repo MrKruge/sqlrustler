@@ -6,6 +6,7 @@ pub mod export;
 pub mod import;
 pub mod monitor;
 pub mod parquet_writer;
+pub mod pool;
 pub mod pressure;
 pub mod progress;
 pub mod schema;

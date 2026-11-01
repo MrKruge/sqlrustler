@@ -47,10 +47,8 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     );
 
     // ── sqlpackage comparison ─────────────────────────────────────────────────
-    if let Some(compare) = &args.compare {
-        if compare == "sqlpackage" {
-            run_sqlpackage_comparison(&args, sqlrustler_elapsed, sqlrustler_size).await?;
-        }
+    if args.compare.as_deref() == Some("sqlpackage") {
+        run_sqlpackage_comparison(&args, sqlrustler_elapsed, sqlrustler_size).await?;
     }
 
     Ok(())
@@ -81,8 +79,16 @@ async fn run_sqlpackage_comparison(
     if let Some(user) = &conn.user {
         sp_args.push(format!("/SourceUser:{user}"));
     }
+    // The password goes in a response file (NamedTempFile is created 0600) so it never
+    // appears in the process list.
+    let mut secrets_file = None;
     if let Some(pass) = &conn.password {
-        sp_args.push(format!("/SourcePassword:{pass}"));
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new()?;
+        writeln!(f, "/SourcePassword:{pass}")?;
+        f.flush()?;
+        sp_args.push(format!("@{}", f.path().display()));
+        secrets_file = Some(f);
     }
 
     tracing::info!("Starting sqlpackage export benchmark");
@@ -92,6 +98,7 @@ async fn run_sqlpackage_comparison(
         .status()
         .await?;
     let sp_elapsed = t0.elapsed();
+    drop(secrets_file);
 
     if !status.success() {
         tracing::warn!("sqlpackage exited with non-zero status: {status}");
@@ -117,9 +124,7 @@ async fn run_sqlpackage_comparison(
             bytesize::ByteSize(size).to_string(),
             format!(
                 "{}/s",
-                bytesize::ByteSize(
-                    (size as f64 / elapsed.as_secs_f64().max(0.001)) as u64
-                )
+                bytesize::ByteSize((size as f64 / elapsed.as_secs_f64().max(0.001)) as u64)
             ),
         )
     };

@@ -2,6 +2,14 @@ use clap::{Args, Parser, Subcommand};
 use std::fmt;
 use std::path::PathBuf;
 
+fn positive_usize(s: &str) -> Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(0) => Err("must be at least 1".to_string()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name    = "sqlrustler",
@@ -122,17 +130,17 @@ pub struct ExportArgs {
     pub output: Option<PathBuf>,
 
     /// Maximum number of tables exported in parallel
-    #[arg(short = 'j', long, default_value_t = num_cpus::get())]
+    #[arg(short = 'j', long, default_value_t = num_cpus::get(), value_parser = positive_usize)]
     pub parallel: usize,
 
     /// Rows per RecordBatch fetch (larger = fewer round-trips, more RAM)
-    #[arg(long, default_value = "10000")]
+    #[arg(long, default_value = "10000", value_parser = positive_usize)]
     pub batch_size: usize,
 
     /// Pressure preset — overrides --parallel and --batch-size:
     ///   light  = 4 parallel,  10k batch  (easy on DB)
     ///   medium = 8 parallel,  50k batch  (balanced)
-    ///   full   = 16 parallel, 50k batch  (maximum throughput)
+    ///   full   = 8 parallel, 100k batch  (maximum throughput; also raises --table-parallelism to at least 4)
     #[arg(long, value_parser = ["light", "medium", "full"])]
     pub pressure: Option<String>,
 
@@ -154,8 +162,8 @@ pub struct ExportArgs {
 
     /// Parallel connections per large table (splits by PK range).
     /// Each large table gets this many concurrent connections; the global --parallel limit
-    /// still caps total concurrent workers. Default 4 = good balance; set to 1 to disable.
-    #[arg(long, default_value = "8")]
+    /// still caps total concurrent workers. Default 8; set to 1 to disable.
+    #[arg(long, default_value = "8", value_parser = positive_usize)]
     pub table_parallelism: usize,
 
     /// Row count threshold above which --table-parallelism kicks in.
@@ -178,19 +186,20 @@ impl ExportArgs {
     /// Resolve effective (parallel, batch_size) after applying --pressure preset.
     pub fn effective_parallelism(&self) -> (usize, usize) {
         match self.pressure.as_deref() {
-            Some("light")  => (4,  10_000),
-            Some("medium") => (8,  50_000),
-            Some("full")   => (8, 100_000),
-            _              => (self.parallel, self.batch_size),
+            Some("light") => (4, 10_000),
+            Some("medium") => (8, 50_000),
+            Some("full") => (8, 100_000),
+            _ => (self.parallel, self.batch_size),
         }
     }
 
     /// Effective intra-table parallelism — preset overrides explicit flag.
     pub fn effective_table_parallelism(&self) -> usize {
         match self.pressure.as_deref() {
-            Some("full")   => self.table_parallelism.max(4),
-            _              => self.table_parallelism,
-        }    }
+            Some("full") => self.table_parallelism.max(4),
+            _ => self.table_parallelism,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -203,11 +212,11 @@ pub struct ImportArgs {
     pub input: PathBuf,
 
     /// Maximum number of tables imported in parallel
-    #[arg(short = 'j', long, default_value_t = num_cpus::get())]
+    #[arg(short = 'j', long, default_value_t = num_cpus::get(), value_parser = positive_usize)]
     pub parallel: usize,
 
     /// Rows per INSERT batch
-    #[arg(long, default_value = "1000")]
+    #[arg(long, default_value = "1000", value_parser = positive_usize)]
     pub batch_size: usize,
 
     /// Import data only — skip DDL execution
@@ -259,7 +268,7 @@ pub struct PressureArgs {
     pub max_connections: usize,
 
     /// Rows per fetch batch during network/DB phases
-    #[arg(long, default_value = "100000")]
+    #[arg(long, default_value = "100000", value_parser = positive_usize)]
     pub batch_size: usize,
 
     /// Seconds to sustain each concurrency level before stepping up
@@ -309,8 +318,13 @@ pub struct TestArgs {
 }
 
 impl TestArgs {
-    pub fn test_source(&self)      -> bool { matches!(self.only.as_str(), "source"      | "all") }
-    pub fn test_bandwidth(&self)   -> bool { matches!(self.only.as_str(), "bandwidth"   | "all") }
-    pub fn test_destination(&self) -> bool { matches!(self.only.as_str(), "destination" | "all") }
+    pub fn test_source(&self) -> bool {
+        matches!(self.only.as_str(), "source" | "all")
+    }
+    pub fn test_bandwidth(&self) -> bool {
+        matches!(self.only.as_str(), "bandwidth" | "all")
+    }
+    pub fn test_destination(&self) -> bool {
+        matches!(self.only.as_str(), "destination" | "all")
+    }
 }
-

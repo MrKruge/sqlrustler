@@ -15,6 +15,7 @@ pub fn make_export_bar(multi: &MultiProgress, table_fqn: &str) -> ProgressBar {
     pb
 }
 
+#[allow(dead_code)] // pub in the lib crate; the bin crate does not call it yet
 pub fn make_import_bar(multi: &MultiProgress, table_fqn: &str, total_rows: u64) -> ProgressBar {
     let pb = multi.add(ProgressBar::new(total_rows));
     pb.set_style(

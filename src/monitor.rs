@@ -22,43 +22,46 @@ use crate::connection::DbPool;
 #[derive(Clone, Debug)]
 pub struct Sample {
     pub elapsed_secs: f64,
-    pub local:   LocalSample,
+    pub local: LocalSample,
     pub network: NetworkSample,
-    pub azure:   Option<AzureSample>,
+    pub azure: Option<AzureSample>,
 }
 
 #[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
 pub struct LocalSample {
-    pub cpu_pct:    f64,   // 0–100
+    pub cpu_pct: f64, // 0–100
     pub mem_used_mb: f64,
     pub mem_total_mb: f64,
 }
 
 #[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
 pub struct NetworkSample {
-    pub rx_mbps: f64,  // megabytes/s received
-    pub tx_mbps: f64,  // megabytes/s sent
+    pub rx_mbps: f64, // megabytes/s received
+    pub tx_mbps: f64, // megabytes/s sent
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct AzureSample {
-    pub cpu_pct:            f64,   // cpu_percent
-    pub workers_pct:        f64,   // workers_percent
-    pub connections:        i64,   // connection_successful (new conns/min)
-    pub data_read_pct:      f64,   // physical_data_read_percent
+    pub cpu_pct: f64,       // cpu_percent
+    pub workers_pct: f64,   // workers_percent
+    pub connections: i64,   // connection_successful (new conns/min)
+    pub data_read_pct: f64, // physical_data_read_percent
 }
 
 // ── Shared timeline ───────────────────────────────────────────────────────────
 
 pub type Timeline = Arc<Mutex<Vec<Sample>>>;
 
+#[allow(dead_code)]
 pub struct MonitorHandle {
-    timeline:  Timeline,
-    stop_tx:   tokio::sync::watch::Sender<bool>,
-    local_h:   JoinHandle<()>,
+    timeline: Timeline,
+    stop_tx: tokio::sync::watch::Sender<bool>,
+    local_h: JoinHandle<()>,
     network_h: JoinHandle<()>,
-    azure_h:   JoinHandle<()>,
-    start:     Instant,
+    azure_h: JoinHandle<()>,
+    start: Instant,
     pub resource_id: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
@@ -87,7 +90,11 @@ fn sample_local() -> LocalSample {
     // Memory: vm_stat gives pages; page size is 16384 bytes on Apple Silicon, 4096 on Intel
     let (mem_used_mb, mem_total_mb) = parse_vmstat().unwrap_or((0.0, 0.0));
 
-    LocalSample { cpu_pct, mem_used_mb, mem_total_mb }
+    LocalSample {
+        cpu_pct,
+        mem_used_mb,
+        mem_total_mb,
+    }
 }
 
 fn parse_vmstat() -> Option<(f64, f64)> {
@@ -95,7 +102,8 @@ fn parse_vmstat() -> Option<(f64, f64)> {
     let text = String::from_utf8(out.stdout).ok()?;
 
     // Page size from first line: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
-    let page_bytes: u64 = text.lines()
+    let page_bytes: u64 = text
+        .lines()
         .next()?
         .split("page size of ")
         .nth(1)?
@@ -113,17 +121,17 @@ fn parse_vmstat() -> Option<(f64, f64)> {
             .unwrap_or(0)
     };
 
-    let active   = parse_pages("Pages active");
-    let wired    = parse_pages("Pages wired down");
+    let active = parse_pages("Pages active");
+    let wired = parse_pages("Pages wired down");
     let occupied = parse_pages("Pages occupied by compressor");
-    let free     = parse_pages("Pages free");
+    let free = parse_pages("Pages free");
     let speculative = parse_pages("Pages speculative");
 
-    let used_bytes  = (active + wired + occupied) * page_bytes;
+    let used_bytes = (active + wired + occupied) * page_bytes;
     let total_bytes = (active + wired + occupied + free + speculative) * page_bytes;
 
     Some((
-        used_bytes  as f64 / 1_048_576.0,
+        used_bytes as f64 / 1_048_576.0,
         total_bytes as f64 / 1_048_576.0,
     ))
 }
@@ -149,9 +157,15 @@ fn sample_network_bytes() -> (u64, u64) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         // netstat -ib columns: Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Drop
         // Only sum rows where Name starts with "en" and Network is not "<Link#>"
-        if parts.len() < 10 { continue; }
-        if !parts[0].starts_with("en") { continue; }
-        if parts[2].starts_with('<') { continue; } // skip Link# rows, use IP rows
+        if parts.len() < 10 {
+            continue;
+        }
+        if !parts[0].starts_with("en") {
+            continue;
+        }
+        if parts[2].starts_with('<') {
+            continue;
+        } // skip Link# rows, use IP rows
         rx = rx.saturating_add(parts[6].parse::<u64>().unwrap_or(0));
         tx = tx.saturating_add(parts[9].parse::<u64>().unwrap_or(0));
     }
@@ -160,7 +174,11 @@ fn sample_network_bytes() -> (u64, u64) {
 
 // ── Agent 4: Azure SQL metrics via az cli ────────────────────────────────────
 
-async fn discover_resource_id(host: &str, database: &str, resource_group: Option<&str>) -> Option<String> {
+async fn discover_resource_id(
+    host: &str,
+    database: &str,
+    resource_group: Option<&str>,
+) -> Option<String> {
     // Strip .database.windows.net to get server name
     let server_name = host.split('.').next()?;
 
@@ -174,12 +192,22 @@ async fn discover_resource_id(host: &str, database: &str, resource_group: Option
 
     // Auto-discover via az sql server list
     let out = tokio::process::Command::new("az")
-        .args(["sql", "server", "list",
-               "--query", &format!("[?name=='{}'].resourceGroup", server_name),
-               "-o", "tsv"])
-        .output().await.ok()?;
+        .args([
+            "sql",
+            "server",
+            "list",
+            "--query",
+            &format!("[?name=='{}'].resourceGroup", server_name),
+            "-o",
+            "tsv",
+        ])
+        .output()
+        .await
+        .ok()?;
     let rg = String::from_utf8(out.stdout).ok()?.trim().to_string();
-    if rg.is_empty() { return None; }
+    if rg.is_empty() {
+        return None;
+    }
 
     let sub = get_subscription_id().await?;
     Some(format!(
@@ -190,9 +218,15 @@ async fn discover_resource_id(host: &str, database: &str, resource_group: Option
 async fn get_subscription_id() -> Option<String> {
     let out = tokio::process::Command::new("az")
         .args(["account", "show", "--query", "id", "-o", "tsv"])
-        .output().await.ok()?;
+        .output()
+        .await
+        .ok()?;
     let id = String::from_utf8(out.stdout).ok()?.trim().to_string();
-    if id.is_empty() { None } else { Some(id) }
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
 }
 
 async fn fetch_azure_sample(resource_id: &str) -> Option<AzureSample> {
@@ -201,35 +235,46 @@ async fn fetch_azure_sample(resource_id: &str) -> Option<AzureSample> {
     let metrics = "cpu_percent,workers_percent,connection_successful,physical_data_read_percent";
     let out = tokio::process::Command::new("az")
         .args([
-            "monitor", "metrics", "list",
-            "--resource", resource_id,
-            "--metric", metrics,
-            "--interval", "PT1M",
-            "--aggregation", "Average",
-            "--output", "json",
+            "monitor",
+            "metrics",
+            "list",
+            "--resource",
+            resource_id,
+            "--metric",
+            metrics,
+            "--interval",
+            "PT1M",
+            "--aggregation",
+            "Average",
+            "--output",
+            "json",
         ])
-        .output().await.ok()?;
+        .output()
+        .await
+        .ok()?;
 
     let text = String::from_utf8(out.stdout).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
 
     let get_latest = |metric_name: &str| -> f64 {
         (|| -> Option<f64> {
-            json["value"].as_array()?
+            json["value"]
+                .as_array()?
                 .iter()
-                .find(|m| m["name"]["value"].as_str() == Some(metric_name))?
-                ["timeseries"][0]["data"]
+                .find(|m| m["name"]["value"].as_str() == Some(metric_name))?["timeseries"][0]
+                ["data"]
                 .as_array()?
                 .iter()
                 .rev()
                 .find_map(|p| p["average"].as_f64())
-        })().unwrap_or(0.0)
+        })()
+        .unwrap_or(0.0)
     };
 
     Some(AzureSample {
-        cpu_pct:       get_latest("cpu_percent"),
-        workers_pct:   get_latest("workers_percent"),
-        connections:   get_latest("connection_successful") as i64,
+        cpu_pct: get_latest("cpu_percent"),
+        workers_pct: get_latest("workers_percent"),
+        connections: get_latest("connection_successful") as i64,
         data_read_pct: get_latest("physical_data_read_percent"),
     })
 }
@@ -247,7 +292,8 @@ pub async fn start(
     let start = Instant::now();
 
     // Discover Azure resource ID in the background (may take a few seconds)
-    let resource_id: Arc<tokio::sync::Mutex<Option<String>>> = Arc::new(tokio::sync::Mutex::new(None));
+    let resource_id: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
     {
         let rid = resource_id.clone();
         let h = host.clone();
@@ -267,32 +313,40 @@ pub async fn start(
     // ── Agent 2: local ───────────────────────────────────────────────────────
     let local_h = {
         let tl = timeline.clone();
-        let mut rx = stop_rx.clone();
-        let start = start.clone();
-        tokio::task::spawn_blocking(move || {
-            loop {
-                if *rx.borrow() { break; }
-                let s = sample_local();
-                tl.lock().unwrap().last_mut().map(|last| last.local = s);
-                std::thread::sleep(Duration::from_secs(interval_secs));
+        let rx = stop_rx.clone();
+        tokio::task::spawn_blocking(move || loop {
+            if *rx.borrow() {
+                break;
             }
+            let s = sample_local();
+            if let Some(last) = tl.lock().unwrap().last_mut() {
+                last.local = s;
+            }
+            std::thread::sleep(Duration::from_secs(interval_secs));
         })
     };
 
     // ── Agent 3: network ─────────────────────────────────────────────────────
     let network_h = {
         let tl = timeline.clone();
-        let mut rx = stop_rx.clone();
+        let rx = stop_rx.clone();
         tokio::task::spawn_blocking(move || {
             let (mut prev_rx, mut prev_tx) = sample_network_bytes();
             std::thread::sleep(Duration::from_secs(interval_secs));
             loop {
-                if *rx.borrow() { break; }
+                if *rx.borrow() {
+                    break;
+                }
                 let (cur_rx, cur_tx) = sample_network_bytes();
-                let rx_mbps = (cur_rx.saturating_sub(prev_rx)) as f64 / interval_secs as f64 / 1_048_576.0;
-                let tx_mbps = (cur_tx.saturating_sub(prev_tx)) as f64 / interval_secs as f64 / 1_048_576.0;
-                prev_rx = cur_rx; prev_tx = cur_tx;
-                tl.lock().unwrap().last_mut().map(|last| last.network = NetworkSample { rx_mbps, tx_mbps });
+                let rx_mbps =
+                    (cur_rx.saturating_sub(prev_rx)) as f64 / interval_secs as f64 / 1_048_576.0;
+                let tx_mbps =
+                    (cur_tx.saturating_sub(prev_tx)) as f64 / interval_secs as f64 / 1_048_576.0;
+                prev_rx = cur_rx;
+                prev_tx = cur_tx;
+                if let Some(last) = tl.lock().unwrap().last_mut() {
+                    last.network = NetworkSample { rx_mbps, tx_mbps };
+                }
                 std::thread::sleep(Duration::from_secs(interval_secs));
             }
         })
@@ -301,7 +355,7 @@ pub async fn start(
     // ── Agent 4: azure ───────────────────────────────────────────────────────
     let azure_h = {
         let tl = timeline.clone();
-        let mut rx = stop_rx.clone();
+        let rx = stop_rx.clone();
         let rid = resource_id.clone();
         // Azure Monitor has 1-min granularity — sample every 30s for freshness
         let azure_interval = interval_secs.max(30);
@@ -309,11 +363,15 @@ pub async fn start(
             let mut interval = tokio::time::interval(Duration::from_secs(azure_interval));
             loop {
                 interval.tick().await;
-                if *rx.borrow() { break; }
+                if *rx.borrow() {
+                    break;
+                }
                 let maybe_id = rid.lock().await.clone();
                 if let Some(ref id) = maybe_id {
                     if let Some(s) = fetch_azure_sample(id).await {
-                        tl.lock().unwrap().last_mut().map(|last| last.azure = Some(s));
+                        if let Some(last) = tl.lock().unwrap().last_mut() {
+                            last.azure = Some(s);
+                        }
                     }
                 }
             }
@@ -323,24 +381,33 @@ pub async fn start(
     // ── Ticker: push a new sample slot every interval ────────────────────────
     {
         let tl = timeline.clone();
-        let mut rx = stop_rx.clone();
-        let start = start.clone();
+        let rx = stop_rx.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
             loop {
                 interval.tick().await;
-                if *rx.borrow() { break; }
+                if *rx.borrow() {
+                    break;
+                }
                 tl.lock().unwrap().push(Sample {
                     elapsed_secs: start.elapsed().as_secs_f64(),
-                    local:   LocalSample::default(),
+                    local: LocalSample::default(),
                     network: NetworkSample::default(),
-                    azure:   None,
+                    azure: None,
                 });
             }
         });
     }
 
-    MonitorHandle { timeline, stop_tx, local_h, network_h, azure_h, start, resource_id }
+    MonitorHandle {
+        timeline,
+        stop_tx,
+        local_h,
+        network_h,
+        azure_h,
+        start,
+        resource_id,
+    }
 }
 
 // ── Report printer ────────────────────────────────────────────────────────────
@@ -358,12 +425,16 @@ pub fn print_report(samples: &[Sample]) {
     println!("╚══════════════════════════════════════════════════════════════════════════╝");
 
     if has_azure {
-        println!("\n  {:>6}  {:>7}  {:>8}  {:>8}  {:>8}  {:>8}  {:>10}  {:>8}",
-            "t(s)", "cpu%", "mem_gb", "net_rx", "az_cpu%", "az_wrkr%", "az_conns", "az_io%");
+        println!(
+            "\n  {:>6}  {:>7}  {:>8}  {:>8}  {:>8}  {:>8}  {:>10}  {:>8}",
+            "t(s)", "cpu%", "mem_gb", "net_rx", "az_cpu%", "az_wrkr%", "az_conns", "az_io%"
+        );
         println!("  {}", "─".repeat(74));
     } else {
-        println!("\n  {:>6}  {:>7}  {:>8}  {:>8}",
-            "t(s)", "cpu%", "mem_gb", "net_rx");
+        println!(
+            "\n  {:>6}  {:>7}  {:>8}  {:>8}",
+            "t(s)", "cpu%", "mem_gb", "net_rx"
+        );
         println!("  {}", "─".repeat(38));
     }
 
@@ -372,21 +443,30 @@ pub fn print_report(samples: &[Sample]) {
         let net = format!("{:.1}MB/s", s.network.rx_mbps);
 
         if has_azure {
-            let (cpu, wrk, conns, io) = s.azure.as_ref()
+            let (cpu, wrk, conns, io) = s
+                .azure
+                .as_ref()
                 .map(|a| (a.cpu_pct, a.workers_pct, a.connections, a.data_read_pct))
                 .unwrap_or((0.0, 0.0, 0, 0.0));
-            println!("  {:>6.0}  {:>6.1}%  {:>7.2}G  {:>8}  {:>7.1}%  {:>7.1}%  {:>10}  {:>7.1}%",
-                s.elapsed_secs, s.local.cpu_pct, mem_gb, net, cpu, wrk, conns, io);
+            println!(
+                "  {:>6.0}  {:>6.1}%  {:>7.2}G  {:>8}  {:>7.1}%  {:>7.1}%  {:>10}  {:>7.1}%",
+                s.elapsed_secs, s.local.cpu_pct, mem_gb, net, cpu, wrk, conns, io
+            );
         } else {
-            println!("  {:>6.0}  {:>6.1}%  {:>7.2}G  {:>8}",
-                s.elapsed_secs, s.local.cpu_pct, mem_gb, net);
+            println!(
+                "  {:>6.0}  {:>6.1}%  {:>7.2}G  {:>8}",
+                s.elapsed_secs, s.local.cpu_pct, mem_gb, net
+            );
         }
     }
 
     // Summary
-    let avg_cpu  = samples.iter().map(|s| s.local.cpu_pct).sum::<f64>() / samples.len() as f64;
-    let peak_rx  = samples.iter().map(|s| s.network.rx_mbps).fold(0.0_f64, f64::max);
-    let avg_rx   = samples.iter().map(|s| s.network.rx_mbps).sum::<f64>() / samples.len() as f64;
+    let avg_cpu = samples.iter().map(|s| s.local.cpu_pct).sum::<f64>() / samples.len() as f64;
+    let peak_rx = samples
+        .iter()
+        .map(|s| s.network.rx_mbps)
+        .fold(0.0_f64, f64::max);
+    let avg_rx = samples.iter().map(|s| s.network.rx_mbps).sum::<f64>() / samples.len() as f64;
 
     println!("\n  Summary:");
     println!("    local avg CPU   : {avg_cpu:.1}%");
@@ -396,10 +476,10 @@ pub fn print_report(samples: &[Sample]) {
     if has_azure {
         let az: Vec<&AzureSample> = samples.iter().filter_map(|s| s.azure.as_ref()).collect();
         if !az.is_empty() {
-            let peak_az_cpu  = az.iter().map(|a| a.cpu_pct).fold(0.0_f64, f64::max);
-            let avg_az_cpu   = az.iter().map(|a| a.cpu_pct).sum::<f64>() / az.len() as f64;
+            let peak_az_cpu = az.iter().map(|a| a.cpu_pct).fold(0.0_f64, f64::max);
+            let avg_az_cpu = az.iter().map(|a| a.cpu_pct).sum::<f64>() / az.len() as f64;
             let peak_workers = az.iter().map(|a| a.workers_pct).fold(0.0_f64, f64::max);
-            let peak_io      = az.iter().map(|a| a.data_read_pct).fold(0.0_f64, f64::max);
+            let peak_io = az.iter().map(|a| a.data_read_pct).fold(0.0_f64, f64::max);
             println!("    azure avg CPU   : {avg_az_cpu:.1}%");
             println!("    azure peak CPU  : {peak_az_cpu:.1}%");
             println!("    azure peak wrkr : {peak_workers:.1}%");
@@ -408,10 +488,14 @@ pub fn print_report(samples: &[Sample]) {
             // Bottleneck verdict — based only on measured metrics
             println!("\n  Bottleneck:");
             if peak_az_cpu > 80.0 {
-                println!("    ⚠  Azure SQL CPU peaked at {peak_az_cpu:.0}% — server CPU is the ceiling.");
+                println!(
+                    "    ⚠  Azure SQL CPU peaked at {peak_az_cpu:.0}% — server CPU is the ceiling."
+                );
                 println!("       Scale up service tier or reduce --table-parallelism.");
             } else if peak_workers > 80.0 {
-                println!("    ⚠  Azure SQL workers peaked at {peak_workers:.0}% — connection limit hit.");
+                println!(
+                    "    ⚠  Azure SQL workers peaked at {peak_workers:.0}% — connection limit hit."
+                );
                 println!("       Reduce --table-parallelism.");
             } else if peak_io > 80.0 {
                 println!("    ⚠  Azure SQL physical I/O peaked at {peak_io:.0}% — storage throughput ceiling.");
@@ -431,7 +515,9 @@ pub fn print_report(samples: &[Sample]) {
         } else if avg_cpu > 60.0 {
             println!("    ⚠  Local CPU avg {avg_cpu:.0}%.");
         } else {
-            println!("    ✓  Local machine and network look healthy. Azure SQL tier may be the limit.");
+            println!(
+                "    ✓  Local machine and network look healthy. Azure SQL tier may be the limit."
+            );
         }
     }
 
@@ -452,7 +538,9 @@ pub async fn query_store_report(pool: &DbPool) {
         Ok(rows) => print_query_store_table(&rows),
         Err(e) => {
             tracing::debug!("Query Store report skipped: {e:#}");
-            println!("\n  (Query Store report unavailable — pass --azure-auth or check permissions)");
+            println!(
+                "\n  (Query Store report unavailable — pass --azure-auth or check permissions)"
+            );
         }
     }
 }
@@ -493,9 +581,9 @@ async fn fetch_query_store(pool: &DbPool) -> Result<Vec<QsRow>> {
     for row in result.into_iter().flatten() {
         let text: &str = row.get(0).unwrap_or("");
         let avg_dur: f64 = row.get::<f64, _>(1).unwrap_or(0.0);
-        let count: i64   = row.get::<i64, _>(2).unwrap_or(0);
-        let lio: f64     = row.get::<f64, _>(3).unwrap_or(0.0);
-        let cpu: f64     = row.get::<f64, _>(4).unwrap_or(0.0);
+        let count: i64 = row.get::<i64, _>(2).unwrap_or(0);
+        let lio: f64 = row.get::<f64, _>(3).unwrap_or(0.0);
+        let cpu: f64 = row.get::<f64, _>(4).unwrap_or(0.0);
         rows.push(QsRow {
             query_text: text.trim().replace('\n', " ").replace('\r', ""),
             avg_duration_ms: avg_dur,
@@ -512,27 +600,49 @@ fn print_query_store_table(rows: &[QsRow]) {
     println!("║                  AZURE SQL QUERY STORE (last 30 min)                   ║");
     println!("╚══════════════════════════════════════════════════════════════════════════╝");
     println!();
-    println!("  {:<55}  {:>10}  {:>8}  {:>10}  {:>8}",
-        "query (first 55 chars)", "avg_ms", "execs", "avg_lio", "avg_cpu_ms");
+    println!(
+        "  {:<55}  {:>10}  {:>8}  {:>10}  {:>8}",
+        "query (first 55 chars)", "avg_ms", "execs", "avg_lio", "avg_cpu_ms"
+    );
     println!("  {}", "─".repeat(97));
 
     for r in rows {
         let snippet: String = r.query_text.chars().take(55).collect();
-        let flag = if r.avg_duration_ms > 5_000.0 { " ⚠" } else { "  " };
-        println!("{flag} {:<55}  {:>10.1}  {:>8}  {:>10.0}  {:>8.1}",
-            snippet, r.avg_duration_ms, r.count_executions, r.avg_logical_io_reads, r.avg_cpu_time_ms);
+        let flag = if r.avg_duration_ms > 5_000.0 {
+            " ⚠"
+        } else {
+            "  "
+        };
+        println!(
+            "{flag} {:<55}  {:>10.1}  {:>8}  {:>10.0}  {:>8.1}",
+            snippet,
+            r.avg_duration_ms,
+            r.count_executions,
+            r.avg_logical_io_reads,
+            r.avg_cpu_time_ms
+        );
     }
 
     // Bottleneck hints
-    let max_dur = rows.iter().map(|r| r.avg_duration_ms).fold(0.0_f64, f64::max);
-    let max_lio = rows.iter().map(|r| r.avg_logical_io_reads).fold(0.0_f64, f64::max);
+    let max_dur = rows
+        .iter()
+        .map(|r| r.avg_duration_ms)
+        .fold(0.0_f64, f64::max);
+    let max_lio = rows
+        .iter()
+        .map(|r| r.avg_logical_io_reads)
+        .fold(0.0_f64, f64::max);
 
     println!("\n  Query Store insights:");
     if max_dur > 10_000.0 {
-        println!("    ⚠  Slowest query avg {max_dur:.0}ms — index or service tier may be limiting.");
+        println!(
+            "    ⚠  Slowest query avg {max_dur:.0}ms — index or service tier may be limiting."
+        );
     }
     if max_lio > 100_000.0 {
-        println!("    ⚠  Highest avg logical I/O reads {max_lio:.0} — heavy table scans in progress.");
+        println!(
+            "    ⚠  Highest avg logical I/O reads {max_lio:.0} — heavy table scans in progress."
+        );
     }
     if max_dur <= 10_000.0 && max_lio <= 100_000.0 {
         println!("    ✓  Query durations and I/O look healthy — bottleneck is likely network or DTU cap.");

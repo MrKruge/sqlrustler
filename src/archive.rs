@@ -56,8 +56,8 @@ impl ArchiveWriter {
     pub fn create(path: &Path, compression_level: i32) -> Result<Self> {
         let file = std::fs::File::create(path)
             .with_context(|| format!("Failed to create archive: {}", path.display()))?;
-        let encoder = zstd::Encoder::new(file, compression_level)
-            .context("Failed to create zstd encoder")?;
+        let encoder =
+            zstd::Encoder::new(file, compression_level).context("Failed to create zstd encoder")?;
         let builder = tar::Builder::new(encoder);
         Ok(Self { builder })
     }
@@ -75,8 +75,8 @@ impl ArchiveWriter {
     }
 
     pub fn write_manifest(&mut self, manifest: &Manifest) -> Result<()> {
-        let json = serde_json::to_string_pretty(manifest)
-            .context("Failed to serialize manifest")?;
+        let json =
+            serde_json::to_string_pretty(manifest).context("Failed to serialize manifest")?;
         let bytes = json.as_bytes();
         let mut header = tar::Header::new_gnu();
         header.set_size(bytes.len() as u64);
@@ -105,8 +105,13 @@ impl ArchiveWriter {
     }
 
     pub fn finish(self) -> Result<()> {
-        let encoder = self.builder.into_inner().context("Failed to finalize tar")?;
-        encoder.finish().context("Failed to finalize zstd encoder")?;
+        let encoder = self
+            .builder
+            .into_inner()
+            .context("Failed to finalize tar")?;
+        encoder
+            .finish()
+            .context("Failed to finalize zstd encoder")?;
         Ok(())
     }
 }
@@ -114,6 +119,10 @@ impl ArchiveWriter {
 // ── Archive reader ────────────────────────────────────────────────────────────
 // P4: For v1 we read all entries into a HashMap. Large DBs (>50 GB) will need
 // streaming access — TODO(streaming-archive-read): use seekable frames + index.
+
+/// Decompression-bomb guards: the whole archive is held in memory, so both limits matter.
+const MAX_ENTRY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 pub struct ArchiveReader {
     entries: HashMap<String, Vec<u8>>,
@@ -127,19 +136,32 @@ impl ArchiveReader {
         let mut archive = tar::Archive::new(decoder);
 
         let mut entries: HashMap<String, Vec<u8>> = HashMap::new();
-        for entry in archive.entries().context("Failed to read archive entries")? {
+        let mut total = 0u64;
+        for entry in archive
+            .entries()
+            .context("Failed to read archive entries")?
+        {
             let mut entry = entry.context("Failed to read archive entry")?;
             let path_str = entry
                 .path()
                 .context("Failed to get entry path")?
-                .to_str()
-                .unwrap_or("")
-                .to_string();
+                .to_string_lossy()
+                .into_owned();
             let mut data = Vec::new();
-            entry
+            (&mut entry)
+                .take(MAX_ENTRY_BYTES + 1)
                 .read_to_end(&mut data)
                 .context("Failed to read entry data")?;
-            entries.insert(path_str, data);
+            if data.len() as u64 > MAX_ENTRY_BYTES {
+                anyhow::bail!("Archive entry {path_str} exceeds the {MAX_ENTRY_BYTES}-byte limit");
+            }
+            total += data.len() as u64;
+            if total > MAX_TOTAL_BYTES {
+                anyhow::bail!("Archive exceeds the {MAX_TOTAL_BYTES}-byte decompressed limit");
+            }
+            if entries.insert(path_str.clone(), data).is_some() {
+                anyhow::bail!("Archive contains duplicate entry: {path_str}");
+            }
         }
 
         Ok(Self { entries })
@@ -158,7 +180,9 @@ impl ArchiveReader {
             .entries
             .get("schema.sql")
             .ok_or_else(|| anyhow!("schema.sql not found in archive"))?;
-        String::from_utf8(bytes.clone()).context("schema.sql is not valid UTF-8")
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .context("schema.sql is not valid UTF-8")
     }
 
     pub fn read_parquet(&self, file_name: &str) -> Result<Vec<u8>> {
@@ -198,7 +222,10 @@ mod tests {
 
     #[test]
     fn fqn_to_filename_with_spaces() {
-        assert_eq!(fqn_to_filename("[my schema].[My Table]"), "my schema_My Table");
+        assert_eq!(
+            fqn_to_filename("[my schema].[My Table]"),
+            "my schema_My Table"
+        );
     }
 
     #[test]
@@ -212,7 +239,10 @@ mod tests {
 
     #[test]
     fn parquet_archive_path_simple() {
-        assert_eq!(parquet_archive_path("[dbo].[Orders]"), "data/dbo_Orders.parquet");
+        assert_eq!(
+            parquet_archive_path("[dbo].[Orders]"),
+            "data/dbo_Orders.parquet"
+        );
     }
 
     #[test]
@@ -275,7 +305,10 @@ mod tests {
 
         // Verify manifest
         let read_manifest = reader.read_manifest().unwrap();
-        assert_eq!(read_manifest.sqlrustler_version, manifest.sqlrustler_version);
+        assert_eq!(
+            read_manifest.sqlrustler_version,
+            manifest.sqlrustler_version
+        );
         assert_eq!(read_manifest.format_version, manifest.format_version);
         assert_eq!(read_manifest.source_database, manifest.source_database);
         assert_eq!(read_manifest.total_rows, manifest.total_rows);
@@ -307,7 +340,10 @@ mod tests {
         }
 
         let reader = ArchiveReader::open(&archive_path).unwrap();
-        assert!(reader.read_manifest().is_err(), "should error when manifest.json missing");
+        assert!(
+            reader.read_manifest().is_err(),
+            "should error when manifest.json missing"
+        );
     }
 
     #[test]

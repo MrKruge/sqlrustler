@@ -126,7 +126,11 @@ impl App {
     fn field_count(&self) -> usize {
         match self.screen {
             Screen::Connection => {
-                if self.auth_method == AuthMethod::Manual { 4 } else { 2 }
+                if self.auth_method == AuthMethod::Manual {
+                    4
+                } else {
+                    2
+                }
             }
             Screen::ExportOptions => 6,
             Screen::ImportOptions => 5,
@@ -137,12 +141,16 @@ impl App {
 
     fn next_field(&mut self) {
         let n = self.field_count();
-        if n > 0 { self.active_field = (self.active_field + 1) % n; }
+        if n > 0 {
+            self.active_field = (self.active_field + 1) % n;
+        }
     }
 
     fn prev_field(&mut self) {
         let n = self.field_count();
-        if n > 0 { self.active_field = (self.active_field + n - 1) % n; }
+        if n > 0 {
+            self.active_field = (self.active_field + n - 1) % n;
+        }
     }
 
     /// Active text field on connection screen (returns mutable ref).
@@ -212,9 +220,7 @@ where
                     continue;
                 }
                 // Global quit
-                if key.code == KeyCode::Char('c')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(());
                 }
                 handle_key(&mut app, key.code, key.modifiers);
@@ -241,29 +247,56 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
 
     match app.screen {
         Screen::Welcome => match code {
-            KeyCode::Esc | KeyCode::Char('q') => { app.should_quit = true; }
-            _ => { app.screen = Screen::MainMenu; }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.should_quit = true;
+            }
+            _ => {
+                app.screen = Screen::MainMenu;
+            }
         },
 
         Screen::MainMenu => match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if app.menu_cursor > 0 { app.menu_cursor -= 1; }
+                if app.menu_cursor > 0 {
+                    app.menu_cursor -= 1;
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if app.menu_cursor < 3 { app.menu_cursor += 1; }
+                if app.menu_cursor < 3 {
+                    app.menu_cursor += 1;
+                }
             }
             KeyCode::Enter => match app.menu_cursor {
-                0 => { app.operation = Some(Operation::Export); app.screen = Screen::Connection; app.active_field = 0; }
-                1 => { app.operation = Some(Operation::Import); app.screen = Screen::Connection; app.active_field = 0; }
-                2 => { app.operation = Some(Operation::Bench); app.screen = Screen::Connection; app.active_field = 0; }
-                _ => { app.should_quit = true; }
+                0 => {
+                    app.operation = Some(Operation::Export);
+                    app.screen = Screen::Connection;
+                    app.active_field = 0;
+                }
+                1 => {
+                    app.operation = Some(Operation::Import);
+                    app.screen = Screen::Connection;
+                    app.active_field = 0;
+                }
+                2 => {
+                    app.operation = Some(Operation::Bench);
+                    app.screen = Screen::Connection;
+                    app.active_field = 0;
+                }
+                _ => {
+                    app.should_quit = true;
+                }
             },
-            KeyCode::Char('q') => { app.should_quit = true; }
+            KeyCode::Char('q') => {
+                app.should_quit = true;
+            }
             _ => {}
         },
 
         Screen::Connection => match code {
-            KeyCode::Esc => { app.screen = Screen::MainMenu; app.active_field = 0; }
+            KeyCode::Esc => {
+                app.screen = Screen::MainMenu;
+                app.active_field = 0;
+            }
             KeyCode::Tab => app.next_field(),
             KeyCode::BackTab => app.prev_field(),
             KeyCode::Char('a') if mods.contains(KeyModifiers::ALT) => {
@@ -308,7 +341,10 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         },
 
         Screen::ExportOptions => match code {
-            KeyCode::Esc => { app.screen = Screen::Connection; app.active_field = 0; }
+            KeyCode::Esc => {
+                app.screen = Screen::Connection;
+                app.active_field = 0;
+            }
             KeyCode::Tab => app.next_field(),
             KeyCode::BackTab => app.prev_field(),
             KeyCode::Char(' ') if app.active_field == 5 => {
@@ -318,16 +354,23 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 app.screen = Screen::Confirm;
             }
             KeyCode::Backspace => {
-                if let Some(f) = app.export_field_mut() { f.pop(); }
+                if let Some(f) = app.export_field_mut() {
+                    f.pop();
+                }
             }
             KeyCode::Char(c) => {
-                if let Some(f) = app.export_field_mut() { f.push(c); }
+                if let Some(f) = app.export_field_mut() {
+                    f.push(c);
+                }
             }
             _ => {}
         },
 
         Screen::ImportOptions => match code {
-            KeyCode::Esc => { app.screen = Screen::Connection; app.active_field = 0; }
+            KeyCode::Esc => {
+                app.screen = Screen::Connection;
+                app.active_field = 0;
+            }
             KeyCode::Tab => app.next_field(),
             KeyCode::BackTab => app.prev_field(),
             KeyCode::Char(' ') if app.active_field == 3 => {
@@ -340,27 +383,38 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 app.screen = Screen::Confirm;
             }
             KeyCode::Backspace => {
-                if let Some(f) = app.import_field_mut() { f.pop(); }
+                if let Some(f) = app.import_field_mut() {
+                    f.pop();
+                }
             }
             KeyCode::Char(c) => {
-                if let Some(f) = app.import_field_mut() { f.push(c); }
+                if let Some(f) = app.import_field_mut() {
+                    f.push(c);
+                }
             }
             _ => {}
         },
 
         Screen::BenchOptions => match code {
-            KeyCode::Esc => { app.screen = Screen::Connection; app.active_field = 0; }
+            KeyCode::Esc => {
+                app.screen = Screen::Connection;
+                app.active_field = 0;
+            }
             KeyCode::Tab => app.next_field(),
             KeyCode::BackTab => app.prev_field(),
             KeyCode::Char(' ') if app.active_field == 1 => {
                 app.compare_sqlpackage = !app.compare_sqlpackage;
             }
-            KeyCode::Enter => { app.screen = Screen::Confirm; }
-            KeyCode::Backspace => {
-                if app.active_field == 0 { app.bench_output.pop(); }
+            KeyCode::Enter => {
+                app.screen = Screen::Confirm;
             }
-            KeyCode::Char(c) => {
-                if app.active_field == 0 { app.bench_output.push(c); }
+            KeyCode::Backspace => {
+                if app.active_field == 0 {
+                    app.bench_output.pop();
+                }
+            }
+            KeyCode::Char(c) if app.active_field == 0 => {
+                app.bench_output.push(c);
             }
             _ => {}
         },
@@ -374,8 +428,12 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                     None => Screen::MainMenu,
                 };
             }
-            KeyCode::Enter => { app.should_run = true; }
-            KeyCode::Char('q') => { app.should_quit = true; }
+            KeyCode::Enter => {
+                app.should_run = true;
+            }
+            KeyCode::Char('q') => {
+                app.should_quit = true;
+            }
             _ => {}
         },
     }
@@ -439,10 +497,7 @@ fn draw_banner(f: &mut Frame, area: Rect) {
             Style::default().fg(DIM),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            TAGLINE,
-            Style::default().fg(GOLD),
-        )),
+        Line::from(Span::styled(TAGLINE, Style::default().fg(GOLD))),
     ];
     f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
@@ -469,11 +524,11 @@ fn draw_welcome(_app: &App, f: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),   // top padding
-            Constraint::Length(8),   // brand banner
-            Constraint::Length(1),   // spacer
-            Constraint::Min(0),      // flex
-            Constraint::Length(3),   // buttons
+            Constraint::Length(2), // top padding
+            Constraint::Length(8), // brand banner
+            Constraint::Length(1), // spacer
+            Constraint::Min(0),    // flex
+            Constraint::Length(3), // buttons
         ])
         .split(inner);
 
@@ -482,44 +537,42 @@ fn draw_welcome(_app: &App, f: &mut Frame, area: Rect) {
 
     // Buttons row
     let btn_area = chunks[4];
-    let buttons = vec![
-        Line::from(vec![
-            Span::raw("          "),
-            Span::styled(
-                "  [ Enter ]  Saddle up  ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(CYAN)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("     "),
-            Span::styled(
-                "  [ Esc / q ]  Ride out  ",
-                Style::default().fg(DIM),
-            ),
-        ]),
-    ];
-    f.render_widget(Paragraph::new(buttons).alignment(Alignment::Center), btn_area);
+    let buttons = vec![Line::from(vec![
+        Span::raw("          "),
+        Span::styled(
+            "  [ Enter ]  Saddle up  ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(CYAN)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("     "),
+        Span::styled("  [ Esc / q ]  Ride out  ", Style::default().fg(DIM)),
+    ])];
+    f.render_widget(
+        Paragraph::new(buttons).alignment(Alignment::Center),
+        btn_area,
+    );
 }
 
 fn draw_main_menu(app: &App, f: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),   // top padding
-            Constraint::Length(8),   // banner
-            Constraint::Length(1),   // spacer
-            Constraint::Length(8),   // menu
+            Constraint::Length(1), // top padding
+            Constraint::Length(8), // banner
+            Constraint::Length(1), // spacer
+            Constraint::Length(8), // menu
             Constraint::Min(0),
-            Constraint::Length(1),   // help
+            Constraint::Length(1), // help
         ])
         .split(area);
 
     draw_banner(f, chunks[1]);
 
     let items: Vec<(&str, &str)> = vec![
-        ("🤠", "Export database to .rustler"),
-        ("📦", "Import .rustler into database"),
+        ("🤠", "Export database to .sqlrustler"),
+        ("📦", "Import .sqlrustler into database"),
         ("⏱ ", "Benchmark vs sqlpackage"),
         ("🚪", "Quit"),
     ];
@@ -530,7 +583,10 @@ fn draw_main_menu(app: &App, f: &mut Frame, area: Rect) {
         .map(|(i, (icon, label))| {
             let selected = i == app.menu_cursor;
             let style = if selected {
-                Style::default().fg(Color::Black).bg(CYAN).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(CYAN)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
@@ -546,7 +602,10 @@ fn draw_main_menu(app: &App, f: &mut Frame, area: Rect) {
     let menu_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(GOLD))
-        .title(Span::styled(" What'll it be, partner? ", Style::default().fg(GOLD).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(
+            " What'll it be, partner? ",
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+        ));
 
     let menu_width = 48u16;
     let menu_height = 8u16;
@@ -576,10 +635,17 @@ fn draw_connection(app: &App, f: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(GOLD))
-        .title(Span::styled(title, Style::default().fg(GOLD).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(
+            title,
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+        ));
 
     let inner_width = 56u16;
-    let inner_height = if app.auth_method == AuthMethod::Manual { 16 } else { 12 };
+    let inner_height = if app.auth_method == AuthMethod::Manual {
+        16
+    } else {
+        12
+    };
     let box_area = centered_rect(inner_width, inner_height, area);
     f.render_widget(Clear, box_area);
     f.render_widget(block, box_area);
@@ -589,12 +655,18 @@ fn draw_connection(app: &App, f: &mut Frame, area: Rect) {
 
     // Auth method toggle
     let az_style = if app.auth_method == AuthMethod::AzureSession {
-        Style::default().fg(Color::Black).bg(CYAN).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Black)
+            .bg(CYAN)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(DIM)
     };
     let manual_style = if app.auth_method == AuthMethod::Manual {
-        Style::default().fg(Color::Black).bg(GOLD).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Black)
+            .bg(GOLD)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(DIM)
     };
@@ -637,10 +709,7 @@ fn draw_connection(app: &App, f: &mut Frame, area: Rect) {
         let cursor = if active { "█" } else { "" };
         lines.push(Line::from(vec![
             Span::styled(format!(" {label}: "), Style::default().fg(Color::White)),
-            Span::styled(
-                format!("{display}{cursor}"),
-                border_style,
-            ),
+            Span::styled(format!("{display}{cursor}"), border_style),
         ]));
     }
 
@@ -648,7 +717,9 @@ fn draw_connection(app: &App, f: &mut Frame, area: Rect) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  ✓ Token fetched via `az account get-access-token`",
-            Style::default().fg(Color::Green).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::ITALIC),
         )));
     }
 
@@ -684,18 +755,64 @@ fn draw_export_options(app: &App, f: &mut Frame, area: Rect) {
 
     let inner = inner_rect(box_area);
     let output_display = if app.output_path.is_empty() {
-        format!("<database>_<timestamp>.rustler{}", if app.active_field == 0 { "█" } else { "" })
+        format!(
+            "<database>_<timestamp>.sqlrustler{}",
+            if app.active_field == 0 { "█" } else { "" }
+        )
     } else {
-        format!("{}{}", app.output_path, if app.active_field == 0 { "█" } else { "" })
+        format!(
+            "{}{}",
+            app.output_path,
+            if app.active_field == 0 { "█" } else { "" }
+        )
     };
 
     let fields: Vec<(&str, String, bool)> = vec![
         ("Output path  ", output_display, false),
-        ("Parallel (-j)", format!("{}{}", app.parallel, if app.active_field == 1 { "█" } else { "" }), false),
-        ("Batch size   ", format!("{}{}", app.export_batch, if app.active_field == 2 { "█" } else { "" }), false),
-        ("Exclude tables (globs)", format!("{}{}", app.exclude_tables, if app.active_field == 3 { "█" } else { "" }), false),
-        ("Compression lvl (1-22)", format!("{}{}", app.compression, if app.active_field == 4 { "█" } else { "" }), false),
-        ("Schema only  ", format!("[{}]  (Space to toggle)", if app.schema_only { "✓" } else { " " }), true),
+        (
+            "Parallel (-j)",
+            format!(
+                "{}{}",
+                app.parallel,
+                if app.active_field == 1 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Batch size   ",
+            format!(
+                "{}{}",
+                app.export_batch,
+                if app.active_field == 2 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Exclude tables (globs)",
+            format!(
+                "{}{}",
+                app.exclude_tables,
+                if app.active_field == 3 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Compression lvl (1-22)",
+            format!(
+                "{}{}",
+                app.compression,
+                if app.active_field == 4 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Schema only  ",
+            format!(
+                "[{}]  (Space to toggle)",
+                if app.schema_only { "✓" } else { " " }
+            ),
+            true,
+        ),
     ];
 
     let mut lines: Vec<Line> = Vec::new();
@@ -738,11 +855,49 @@ fn draw_import_options(app: &App, f: &mut Frame, area: Rect) {
     let inner = inner_rect(box_area);
 
     let fields: Vec<(&str, String, bool)> = vec![
-        ("Input path    ", format!("{}{}", app.input_path, if app.active_field == 0 { "█" } else { "" }), false),
-        ("Parallel (-j) ", format!("{}{}", app.parallel, if app.active_field == 1 { "█" } else { "" }), false),
-        ("Batch size    ", format!("{}{}", app.import_batch, if app.active_field == 2 { "█" } else { "" }), false),
-        ("Drop existing ", format!("[{}]  (Space to toggle)", if app.drop_existing { "✓" } else { " " }), true),
-        ("Data only     ", format!("[{}]  (Space to toggle)", if app.data_only { "✓" } else { " " }), true),
+        (
+            "Input path    ",
+            format!(
+                "{}{}",
+                app.input_path,
+                if app.active_field == 0 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Parallel (-j) ",
+            format!(
+                "{}{}",
+                app.parallel,
+                if app.active_field == 1 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Batch size    ",
+            format!(
+                "{}{}",
+                app.import_batch,
+                if app.active_field == 2 { "█" } else { "" }
+            ),
+            false,
+        ),
+        (
+            "Drop existing ",
+            format!(
+                "[{}]  (Space to toggle)",
+                if app.drop_existing { "✓" } else { " " }
+            ),
+            true,
+        ),
+        (
+            "Data only     ",
+            format!(
+                "[{}]  (Space to toggle)",
+                if app.data_only { "✓" } else { " " }
+            ),
+            true,
+        ),
     ];
 
     let mut lines: Vec<Line> = Vec::new();
@@ -788,19 +943,37 @@ fn draw_bench_options(app: &App, f: &mut Frame, area: Rect) {
     let output_display = if app.bench_output.is_empty() {
         format!("<auto>{}", if app.active_field == 0 { "█" } else { "" })
     } else {
-        format!("{}{}", app.bench_output, if app.active_field == 0 { "█" } else { "" })
+        format!(
+            "{}{}",
+            app.bench_output,
+            if app.active_field == 0 { "█" } else { "" }
+        )
     };
 
     let lines = vec![
         Line::from(vec![
             Span::styled(" Output path:        ", Style::default().fg(Color::White)),
-            Span::styled(output_display, if app.active_field == 0 { Style::default().fg(CYAN).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
+            Span::styled(
+                output_display,
+                if app.active_field == 0 {
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                },
+            ),
         ]),
         Line::from(vec![
             Span::styled(" Compare sqlpackage: ", Style::default().fg(Color::White)),
             Span::styled(
-                format!("[{}]  (Space to toggle)", if app.compare_sqlpackage { "✓" } else { " " }),
-                if app.compare_sqlpackage { Style::default().fg(Color::Green) } else { Style::default().fg(Color::White) },
+                format!(
+                    "[{}]  (Space to toggle)",
+                    if app.compare_sqlpackage { "✓" } else { " " }
+                ),
+                if app.compare_sqlpackage {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::White)
+                },
             ),
         ]),
         Line::from(""),
@@ -840,7 +1013,10 @@ fn draw_confirm(app: &App, f: &mut Frame, area: Rect) {
     };
 
     let mut lines = vec![
-        Line::from(Span::styled(" ── Connection ───────────────────────────────", Style::default().fg(DIM))),
+        Line::from(Span::styled(
+            " ── Connection ───────────────────────────────",
+            Style::default().fg(DIM),
+        )),
         kv("  Host    ", &app.host),
         kv("  Database", &app.database),
         kv("  Auth    ", &auth_display),
@@ -849,8 +1025,15 @@ fn draw_confirm(app: &App, f: &mut Frame, area: Rect) {
 
     match &app.operation {
         Some(Operation::Export) => {
-            lines.push(Line::from(Span::styled(" ── Export ───────────────────────────────────", Style::default().fg(DIM))));
-            let out = if app.output_path.is_empty() { "<auto>.rustler".to_string() } else { app.output_path.clone() };
+            lines.push(Line::from(Span::styled(
+                " ── Export ───────────────────────────────────",
+                Style::default().fg(DIM),
+            )));
+            let out = if app.output_path.is_empty() {
+                "<auto>.sqlrustler".to_string()
+            } else {
+                app.output_path.clone()
+            };
             let compress = format!("zstd level {}", app.compression);
             lines.push(kv("  Output   ", &out));
             lines.push(kv("  Parallel ", &app.parallel));
@@ -858,22 +1041,40 @@ fn draw_confirm(app: &App, f: &mut Frame, area: Rect) {
             if !app.exclude_tables.is_empty() {
                 lines.push(kv("  Exclude  ", &app.exclude_tables));
             }
-            if app.schema_only { lines.push(kv("  Schema only", "yes")); }
+            if app.schema_only {
+                lines.push(kv("  Schema only", "yes"));
+            }
             lines.push(kv("  Compress ", &compress));
         }
         Some(Operation::Import) => {
-            lines.push(Line::from(Span::styled(" ── Import ───────────────────────────────────", Style::default().fg(DIM))));
+            lines.push(Line::from(Span::styled(
+                " ── Import ───────────────────────────────────",
+                Style::default().fg(DIM),
+            )));
             lines.push(kv("  Input    ", &app.input_path));
             lines.push(kv("  Parallel ", &app.parallel));
             lines.push(kv("  Batch    ", &app.import_batch));
-            if app.drop_existing { lines.push(kv("  Drop DB  ", "yes — database will be recreated")); }
-            if app.data_only { lines.push(kv("  Data only", "yes — DDL skipped")); }
+            if app.drop_existing {
+                lines.push(kv("  Drop DB  ", "yes — database will be recreated"));
+            }
+            if app.data_only {
+                lines.push(kv("  Data only", "yes — DDL skipped"));
+            }
         }
         Some(Operation::Bench) => {
-            lines.push(Line::from(Span::styled(" ── Benchmark ────────────────────────────────", Style::default().fg(DIM))));
-            let out = if app.bench_output.is_empty() { "<auto>".to_string() } else { app.bench_output.clone() };
+            lines.push(Line::from(Span::styled(
+                " ── Benchmark ────────────────────────────────",
+                Style::default().fg(DIM),
+            )));
+            let out = if app.bench_output.is_empty() {
+                "<auto>".to_string()
+            } else {
+                app.bench_output.clone()
+            };
             lines.push(kv("  Output   ", &out));
-            if app.compare_sqlpackage { lines.push(kv("  Compare  ", "sqlpackage")); }
+            if app.compare_sqlpackage {
+                lines.push(kv("  Compare  ", "sqlpackage"));
+            }
         }
         None => {}
     }
@@ -881,7 +1082,13 @@ fn draw_confirm(app: &App, f: &mut Frame, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled(" ", Style::default()),
-        Span::styled(" [Enter] Yeehaw! Let's go ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [Enter] Yeehaw! Let's go ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("   ", Style::default()),
         Span::styled(" [Esc] Change something ", Style::default().fg(DIM)),
     ]));
@@ -905,7 +1112,11 @@ async fn execute_operation(app: App) -> Result<()> {
     let (azure_auth, aad_token, user, password) = match app.auth_method {
         AuthMethod::AzureSession => (true, None, None, None),
         AuthMethod::Manual => {
-            let pass = if app.password.is_empty() { None } else { Some(app.password.clone()) };
+            let pass = if app.password.is_empty() {
+                None
+            } else {
+                Some(app.password.clone())
+            };
             (false, None, Some(app.user.clone()), pass)
         }
     };
@@ -926,14 +1137,22 @@ async fn execute_operation(app: App) -> Result<()> {
             use crate::cli::ExportArgs;
             let args = ExportArgs {
                 conn,
-                output: if app.output_path.is_empty() { None } else { Some(std::path::PathBuf::from(&app.output_path)) },
+                output: if app.output_path.is_empty() {
+                    None
+                } else {
+                    Some(std::path::PathBuf::from(&app.output_path))
+                },
                 parallel: app.parallel.parse().unwrap_or_else(|_| num_cpus::get()),
                 batch_size: app.export_batch.parse().unwrap_or(10000),
                 pressure: None,
                 exclude_tables: if app.exclude_tables.is_empty() {
                     vec![]
                 } else {
-                    app.exclude_tables.split(',').map(str::trim).map(String::from).collect()
+                    app.exclude_tables
+                        .split(',')
+                        .map(str::trim)
+                        .map(String::from)
+                        .collect()
                 },
                 schema_only: app.schema_only,
                 compression_level: app.compression.parse().unwrap_or(3),
@@ -959,15 +1178,26 @@ async fn execute_operation(app: App) -> Result<()> {
                 data_only: app.data_only,
                 drop_existing: app.drop_existing,
             };
-            println!("🤠 Riding the herd into the corral at {}...\n", args.conn.host);
+            println!(
+                "🤠 Riding the herd into the corral at {}...\n",
+                args.conn.host
+            );
             crate::import::run(args).await?;
         }
         Some(Operation::Bench) => {
             use crate::cli::BenchArgs;
             let args = BenchArgs {
                 conn,
-                output: if app.bench_output.is_empty() { None } else { Some(std::path::PathBuf::from(&app.bench_output)) },
-                compare: if app.compare_sqlpackage { Some("sqlpackage".to_string()) } else { None },
+                output: if app.bench_output.is_empty() {
+                    None
+                } else {
+                    Some(std::path::PathBuf::from(&app.bench_output))
+                },
+                compare: if app.compare_sqlpackage {
+                    Some("sqlpackage".to_string())
+                } else {
+                    None
+                },
             };
             println!("🤠 Let's see who's fastest in the West...\n");
             crate::bench::run(args).await?;
@@ -978,7 +1208,6 @@ async fn execute_operation(app: App) -> Result<()> {
     println!("\n🤠 That's a wrap, cowpoke! Ride on.");
     Ok(())
 }
-
 
 // ── Layout helpers ────────────────────────────────────────────────────────────
 

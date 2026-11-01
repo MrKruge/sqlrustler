@@ -5,38 +5,40 @@ use crate::schema::ColumnInfo;
 /// Map a SQL Server column type string → Arrow DataType.
 pub fn sql_to_arrow(type_name: &str, precision: u8, scale: u8, _max_length: i16) -> DataType {
     match type_name.to_lowercase().as_str() {
-        "bigint"                          => DataType::Int64,
-        "int"                             => DataType::Int32,
-        "smallint"                        => DataType::Int16,
+        "bigint" => DataType::Int64,
+        "int" => DataType::Int32,
+        "smallint" => DataType::Int16,
         // SQL Server TINYINT is unsigned 0-255; use UInt8, not Int8.
-        "tinyint"                         => DataType::UInt8,
-        "bit"                             => DataType::Boolean,
-        "float"                           => DataType::Float64,
-        "real"                            => DataType::Float32,
-        "decimal" | "numeric"             => DataType::Decimal128(precision, scale as i8),
-        "money"                           => DataType::Decimal128(19, 4),
-        "smallmoney"                      => DataType::Decimal128(10, 4),
-        "char" | "varchar" | "text"       => DataType::Utf8,
-        "nchar" | "nvarchar" | "ntext"    => DataType::Utf8,
-        "binary" | "varbinary" | "image"  => DataType::Binary,
+        "tinyint" => DataType::UInt8,
+        "bit" => DataType::Boolean,
+        "float" => DataType::Float64,
+        "real" => DataType::Float32,
+        "decimal" | "numeric" => DataType::Decimal128(precision, scale as i8),
+        "money" => DataType::Decimal128(19, 4),
+        "smallmoney" => DataType::Decimal128(10, 4),
+        "char" | "varchar" | "text" => DataType::Utf8,
+        "nchar" | "nvarchar" | "ntext" => DataType::Utf8,
+        "binary" | "varbinary" | "image" => DataType::Binary,
         // timestamp/rowversion is a 8-byte auto-generated value, not a real datetime
-        "timestamp" | "rowversion"        => DataType::Binary,
-        "datetime" | "smalldatetime"      => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-        "datetime2"                       => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-        "datetimeoffset"                  => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-        "date"                            => DataType::Date32,
-        "time"                            => DataType::Time64(TimeUnit::Microsecond),
-        "uniqueidentifier"                => DataType::FixedSizeBinary(16),
-        "xml" | "json"                    => DataType::Utf8,
+        "timestamp" | "rowversion" => DataType::Binary,
+        "datetime" | "smalldatetime" => {
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+        }
+        "datetime2" => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+        "datetimeoffset" => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+        "date" => DataType::Date32,
+        "time" => DataType::Time64(TimeUnit::Microsecond),
+        "uniqueidentifier" => DataType::FixedSizeBinary(16),
+        "xml" | "json" => DataType::Utf8,
         // sql_variant: tiberius cannot decode SSVariant from the wire;
         // we CAST to NVARCHAR(MAX) in SELECT so no column is ever skipped.
-        "sql_variant"                     => DataType::Utf8,
+        "sql_variant" => DataType::Utf8,
         // hierarchyid: CLR type; we call .ToString() in SELECT → string path like "/1/2/3/"
-        "hierarchyid"                     => DataType::Utf8,
+        "hierarchyid" => DataType::Utf8,
         // Spatial types: serialize as WKB
-        "geography" | "geometry"          => DataType::Binary,
+        "geography" | "geometry" => DataType::Binary,
         // Unknown types: serialize as string via CAST in SELECT
-        _                                 => DataType::Utf8,
+        _ => DataType::Utf8,
     }
 }
 
@@ -58,18 +60,23 @@ pub fn build_arrow_schema(columns: &[ColumnInfo]) -> Schema {
 /// Returns an override SELECT expression for types that need a CAST to be
 /// readable by tiberius without a custom codec. Returns None if direct read is fine.
 pub fn select_expr(col_name: &str, type_name: &str) -> Option<String> {
-    let n = format!("[{col_name}]");
+    let n = crate::schema::quote_ident(col_name);
     match type_name.to_lowercase().as_str() {
-        "xml"       => Some(format!("CAST({n} AS NVARCHAR(MAX))")),
+        "xml" => Some(format!("CAST({n} AS NVARCHAR(MAX))")),
+        // money/smallmoney: TDS delivers them to tiberius as f64 (value/1e4 computed in
+        // floating point), which loses cents above ~9e11 and cannot be read as a decimal.
+        // Casting to an exact DECIMAL of the same range makes the server do the work.
+        "money" => Some(format!("CAST({n} AS DECIMAL(19,4))")),
+        "smallmoney" => Some(format!("CAST({n} AS DECIMAL(10,4))")),
         // sql_variant: tiberius panics on SSVariant wire type; cast to string preserves all values.
         "sql_variant" => Some(format!("CAST({n} AS NVARCHAR(MAX))")),
         // hierarchyid: CLR type, tiberius can't decode; ToString() gives canonical path string e.g. "/1/2/3/"
         "hierarchyid" => Some(format!("{n}.ToString()")),
         "geography" => Some(format!("{n}.STAsBinary()")),
-        "geometry"  => Some(format!("{n}.STAsBinary()")),
+        "geometry" => Some(format!("{n}.STAsBinary()")),
         // timestamp/rowversion: cast to binary so tiberius returns raw bytes
         "timestamp" | "rowversion" => Some(format!("CAST({n} AS VARBINARY(8))")),
-        _           => None,
+        _ => None,
     }
 }
 
@@ -101,7 +108,9 @@ mod tests {
 
     #[test]
     fn test_select_expr_xml() {
-        assert!(select_expr("MyCol", "xml").unwrap().contains("NVARCHAR(MAX)"));
+        assert!(select_expr("MyCol", "xml")
+            .unwrap()
+            .contains("NVARCHAR(MAX)"));
     }
 
     #[test]
@@ -133,7 +142,10 @@ mod tests {
 
     #[test]
     fn numeric_maps_to_decimal128() {
-        assert_eq!(sql_to_arrow("numeric", 10, 2, -1), DataType::Decimal128(10, 2));
+        assert_eq!(
+            sql_to_arrow("numeric", 10, 2, -1),
+            DataType::Decimal128(10, 2)
+        );
     }
 
     #[test]
@@ -143,7 +155,10 @@ mod tests {
 
     #[test]
     fn smallmoney_maps_to_decimal128_10_4() {
-        assert_eq!(sql_to_arrow("smallmoney", 10, 4, 4), DataType::Decimal128(10, 4));
+        assert_eq!(
+            sql_to_arrow("smallmoney", 10, 4, 4),
+            DataType::Decimal128(10, 4)
+        );
     }
 
     #[test]
@@ -230,12 +245,18 @@ mod tests {
 
     #[test]
     fn time_maps_to_time64_microsecond() {
-        assert_eq!(sql_to_arrow("time", 16, 7, 5), DataType::Time64(TimeUnit::Microsecond));
+        assert_eq!(
+            sql_to_arrow("time", 16, 7, 5),
+            DataType::Time64(TimeUnit::Microsecond)
+        );
     }
 
     #[test]
     fn uniqueidentifier_maps_to_fixed_size_binary_16() {
-        assert_eq!(sql_to_arrow("uniqueidentifier", 0, 0, 16), DataType::FixedSizeBinary(16));
+        assert_eq!(
+            sql_to_arrow("uniqueidentifier", 0, 0, 16),
+            DataType::FixedSizeBinary(16)
+        );
     }
 
     #[test]
@@ -268,8 +289,10 @@ mod tests {
     fn case_insensitive_mapping() {
         assert_eq!(sql_to_arrow("INT", 10, 0, 4), DataType::Int32);
         assert_eq!(sql_to_arrow("BigInt", 19, 0, 8), DataType::Int64);
-        assert_eq!(sql_to_arrow("DATETIME2", 27, 7, 8),
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())));
+        assert_eq!(
+            sql_to_arrow("DATETIME2", 27, 7, 8),
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+        );
     }
 
     // ── select_expr overrides ─────────────────────────────────────────────────
@@ -354,5 +377,27 @@ mod tests {
     #[test]
     fn select_expr_passthrough_varbinary() {
         assert!(select_expr("Data", "varbinary").is_none());
+    }
+
+    // ── Round 1 fidelity fixes ────────────────────────────────────────────────
+
+    #[test]
+    fn money_columns_are_cast_to_exact_decimal() {
+        assert_eq!(
+            select_expr("Price", "money").unwrap(),
+            "CAST([Price] AS DECIMAL(19,4))"
+        );
+        assert_eq!(
+            select_expr("Fee", "smallmoney").unwrap(),
+            "CAST([Fee] AS DECIMAL(10,4))"
+        );
+    }
+
+    #[test]
+    fn select_expr_escapes_closing_bracket() {
+        assert_eq!(
+            select_expr("a]b", "xml").unwrap(),
+            "CAST([a]]b] AS NVARCHAR(MAX))"
+        );
     }
 }

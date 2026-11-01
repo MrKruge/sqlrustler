@@ -68,7 +68,7 @@ pub fn run_local_sink(rows: usize, cols: usize, compression_level: i32) -> Resul
 
     let compression = match compression_level {
         1 => Compression::ZSTD(parquet::basic::ZstdLevel::try_new(1)?),
-        _  => Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?),
+        _ => Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?),
     };
     let props = WriterProperties::builder()
         .set_compression(compression)
@@ -108,6 +108,7 @@ pub fn run_local_sink(rows: usize, cols: usize, compression_level: i32) -> Resul
     })
 }
 
+#[allow(dead_code)]
 pub struct LocalSinkResult {
     pub rows: usize,
     pub cols: usize,
@@ -126,6 +127,7 @@ impl LocalSinkResult {
 
 // ── Phase 2: network probe ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct NetworkProbeResult {
     pub table_fqn: String,
     pub rows: u64,
@@ -150,7 +152,10 @@ async fn probe_network(
     max_rows: Option<u64>,
     filter: Option<String>,
 ) -> Result<NetworkProbeResult> {
-    let mut conn = pool.get().await.context("failed to get connection for network probe")?;
+    let mut conn = pool
+        .get()
+        .await
+        .context("failed to get connection for network probe")?;
     let top = max_rows.map(|n| format!("TOP ({n}) ")).unwrap_or_default();
     let wh = filter.map(|f| format!(" WHERE {f}")).unwrap_or_default();
     let query = format!("SELECT {top}{select_list} FROM {table_fqn} WITH (NOLOCK){wh}");
@@ -184,6 +189,7 @@ async fn probe_network(
 
 // ── Phase 3: DB ramp ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct RampStep {
     pub connections: usize,
     pub aggregate_rows_per_sec: f64,
@@ -211,7 +217,6 @@ async fn ramp_step(
         let pool = pool.clone();
         let fqn = table_fqn.to_string();
         let sel = select_list.to_string();
-        let deadline = deadline;
         let sem = sem.clone();
 
         handles.push(tokio::spawn(async move {
@@ -223,11 +228,11 @@ async fn ramp_step(
 
             let mut rows: u64 = 0;
             while Instant::now() < deadline {
-                match tokio::time::timeout(
-                    Duration::from_secs(5),
-                    stream.next(),
-                ).await {
-                    Ok(Some(r)) => { r?; rows += 1; }
+                match tokio::time::timeout(Duration::from_secs(5), stream.next()).await {
+                    Ok(Some(r)) => {
+                        r?;
+                        rows += 1;
+                    }
                     Ok(None) => break,
                     Err(_) => break,
                 }
@@ -259,34 +264,45 @@ pub async fn run(args: PressureArgs) -> Result<()> {
     println!("║              sqlrustler pressure tester                  ║");
     println!("╚══════════════════════════════════════════════════════════╝");
     println!("  target : {}:{}", args.conn.host, args.conn.database);
-    println!("  ramp   : 1 → {} connections, {}s per step", args.max_connections, args.step_secs);
+    println!(
+        "  ramp   : 1 → {} connections, {}s per step",
+        args.max_connections, args.step_secs
+    );
 
     // ── Phase 1: local sink ───────────────────────────────────────────────────
     if !args.skip_local {
         header("Phase 1 — Local Parquet sink  (no network)");
         println!("  Writing 5M synthetic rows × 10 cols to temp Parquet file...");
 
-        let result = tokio::task::spawn_blocking(|| {
-            run_local_sink(5_000_000, 10, 3)
-        }).await??;
+        let result = tokio::task::spawn_blocking(|| run_local_sink(5_000_000, 10, 3)).await??;
 
-        result_row("rows written",   &format!("{}", result.rows));
-        result_row("elapsed",        &format!("{:.2}s", result.elapsed.as_secs_f64()));
-        result_row("rows/sec",       &format!("{:.0}", result.rows_per_sec()));
-        result_row("output size",    &bytesize::ByteSize(result.output_bytes).to_string());
-        result_row("write MB/s",     &format!("{:.1} MB/s", result.mb_per_sec()));
+        result_row("rows written", &format!("{}", result.rows));
+        result_row("elapsed", &format!("{:.2}s", result.elapsed.as_secs_f64()));
+        result_row("rows/sec", &format!("{:.0}", result.rows_per_sec()));
+        result_row(
+            "output size",
+            &bytesize::ByteSize(result.output_bytes).to_string(),
+        );
+        result_row("write MB/s", &format!("{:.1} MB/s", result.mb_per_sec()));
         println!("\n  → This is your LOCAL CEILING. Network phases cannot exceed this.");
     }
 
     // ── Connect ───────────────────────────────────────────────────────────────
     let max_pool = (args.max_connections + 4) as u32;
-    tracing::info!("Connecting to {}/{} (pool {})", args.conn.host, args.conn.database, max_pool);
+    tracing::info!(
+        "Connecting to {}/{} (pool {})",
+        args.conn.host,
+        args.conn.database,
+        max_pool
+    );
     let pool = build_pool(&args.conn, max_pool).await?;
 
     // Resolve target table
     let bundle = schema::extract(&pool, &[]).await?;
     let table = if let Some(ref fqn) = args.table {
-        bundle.tables.iter()
+        bundle
+            .tables
+            .iter()
             .find(|t| t.fqn.eq_ignore_ascii_case(fqn))
             .cloned()
             .with_context(|| format!("Table '{fqn}' not found in database"))?
@@ -303,9 +319,14 @@ pub async fn run(args: PressureArgs) -> Result<()> {
                  WHERE s.name = '{}' AND tbl.name = '{}' AND p.index_id IN (0,1)",
                 t.schema, t.name
             );
-            let r: i64 = conn.query(&sql, &[]).await?
-                .into_results().await?
-                .into_iter().flatten().next()
+            let r: i64 = conn
+                .query(&sql, &[])
+                .await?
+                .into_results()
+                .await?
+                .into_iter()
+                .flatten()
+                .next()
                 .and_then(|row| row.get::<i64, _>(0))
                 .unwrap_or(0);
             if r > best_rows {
@@ -313,7 +334,11 @@ pub async fn run(args: PressureArgs) -> Result<()> {
                 best = t.clone();
             }
         }
-        tracing::info!("Auto-selected largest table: {} ({} rows)", best.fqn, best_rows);
+        tracing::info!(
+            "Auto-selected largest table: {} ({} rows)",
+            best.fqn,
+            best_rows
+        );
         best
     };
 
@@ -325,7 +350,9 @@ pub async fn run(args: PressureArgs) -> Result<()> {
             let mut v = Vec::new();
             for name in s.split(',').map(str::trim).filter(|n| !n.is_empty()) {
                 v.push(
-                    table.columns.iter()
+                    table
+                        .columns
+                        .iter()
                         .find(|c| c.name.eq_ignore_ascii_case(name))
                         .with_context(|| format!("Column '{name}' not found in {}", table.fqn))?,
                 );
@@ -333,20 +360,36 @@ pub async fn run(args: PressureArgs) -> Result<()> {
             v
         }
     };
-    let select_cols: Vec<String> = chosen.iter().map(|c| {
-        select_expr(&c.name, &c.sql_type)
-            .unwrap_or_else(|| format!("[{}]", c.name))
-    }).collect();
+    let select_cols: Vec<String> = chosen
+        .iter()
+        .map(|c| select_expr(&c.name, &c.sql_type).unwrap_or_else(|| format!("[{}]", c.name)))
+        .collect();
     let select_list = select_cols.join(", ");
-    println!("  columns: {}", chosen.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
+    println!(
+        "  columns: {}",
+        chosen
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let probe_filter: Option<String> = match args.id_range.as_deref() {
         None => None,
         Some(s) => {
             let (lo, hi) = s.split_once(':').context("--id-range must be LO:HI")?;
-            let lo: i64 = lo.trim().parse().context("--id-range LO must be an integer")?;
-            let hi: i64 = hi.trim().parse().context("--id-range HI must be an integer")?;
-            let pk = table.chunk_key.clone().context("table has no chunk key for --id-range")?;
+            let lo: i64 = lo
+                .trim()
+                .parse()
+                .context("--id-range LO must be an integer")?;
+            let hi: i64 = hi
+                .trim()
+                .parse()
+                .context("--id-range HI must be an integer")?;
+            let pk = table
+                .chunk_key
+                .clone()
+                .context("table has no chunk key for --id-range")?;
             Some(format!("[{pk}] BETWEEN {lo} AND {hi}"))
         }
     };
@@ -356,23 +399,46 @@ pub async fn run(args: PressureArgs) -> Result<()> {
         header(&format!("Phase 2 — Network pipe  (table: {})", table.fqn));
         println!("  Streaming all rows over a single connection. Ctrl-C to abort.");
 
-        let result = probe_network(&pool, &table.fqn, &select_list, args.batch_size, args.max_rows, probe_filter.clone()).await?;
+        let result = probe_network(
+            &pool,
+            &table.fqn,
+            &select_list,
+            args.batch_size,
+            args.max_rows,
+            probe_filter.clone(),
+        )
+        .await?;
 
-        result_row("table",        &table.fqn);
+        result_row("table", &table.fqn);
         result_row("rows received", &format!("{}", result.rows));
-        result_row("elapsed",       &format!("{:.2}s", result.elapsed.as_secs_f64()));
-        result_row("rows/sec",      &format!("{:.0}", result.rows_per_sec()));
-        result_row("approx MB/s",   &format!("{:.1} MB/s  (estimated from col count)", result.mb_per_sec()));
+        result_row("elapsed", &format!("{:.2}s", result.elapsed.as_secs_f64()));
+        result_row("rows/sec", &format!("{:.0}", result.rows_per_sec()));
+        result_row(
+            "approx MB/s",
+            &format!(
+                "{:.1} MB/s  (estimated from col count)",
+                result.mb_per_sec()
+            ),
+        );
         println!("\n  → This is your NETWORK CEILING from this machine.");
         println!("    Run from an Azure VM in the same region for 10-100× more.");
     }
 
     // ── Phase 3: DB ramp ──────────────────────────────────────────────────────
     if !args.skip_db_ramp {
-        header(&format!("Phase 3 — DB concurrency ramp  (table: {})", table.fqn));
-        println!("  Ramping connections 1 → {}. Each step runs for {}s.", args.max_connections, args.step_secs);
+        header(&format!(
+            "Phase 3 — DB concurrency ramp  (table: {})",
+            table.fqn
+        ));
+        println!(
+            "  Ramping connections 1 → {}. Each step runs for {}s.",
+            args.max_connections, args.step_secs
+        );
         println!("  Watch for rows/sec to plateau — that's your Azure SQL ceiling.\n");
-        println!("  {:>6}  {:>14}  {:>14}  {:>10}", "conns", "agg rows/s", "per-conn r/s", "elapsed");
+        println!(
+            "  {:>6}  {:>14}  {:>14}  {:>10}",
+            "conns", "agg rows/s", "per-conn r/s", "elapsed"
+        );
         println!("  {}", "─".repeat(50));
 
         let steps: Vec<usize> = {
@@ -392,7 +458,8 @@ pub async fn run(args: PressureArgs) -> Result<()> {
         let mut knee: Option<usize> = None;
 
         for &conns in &steps {
-            let step = ramp_step(&args.conn, &table.fqn, &select_list, conns, args.step_secs).await?;
+            let step =
+                ramp_step(&args.conn, &table.fqn, &select_list, conns, args.step_secs).await?;
 
             let improvement = if prev_agg > 0.0 {
                 ((step.aggregate_rows_per_sec - prev_agg) / prev_agg) * 100.0
@@ -425,8 +492,14 @@ pub async fn run(args: PressureArgs) -> Result<()> {
             println!("    Beyond this, Azure SQL is the bottleneck (DTU/vCore limit).");
             println!("    Set --parallel {k} for best real-world export throughput.");
         } else {
-            println!("  → No knee detected up to {} connections.", args.max_connections);
-            println!("    Try --max-connections {} to find the ceiling.", args.max_connections * 2);
+            println!(
+                "  → No knee detected up to {} connections.",
+                args.max_connections
+            );
+            println!(
+                "    Try --max-connections {} to find the ceiling.",
+                args.max_connections * 2
+            );
         }
     }
 

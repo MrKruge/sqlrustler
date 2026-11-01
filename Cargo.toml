@@ -2,12 +2,28 @@
 name        = "sqlrustler"
 version     = "0.1.0"
 edition     = "2021"
-rust-version = "1.80"
+rust-version = "1.89"
 description = "Fast Azure SQL Database export/import — open-source BACPAC replacement"
 license     = "MIT OR Apache-2.0"
 repository  = "https://github.com/MrKruge/sqlrustler"
 keywords    = ["azure", "sql-server", "parquet", "export", "bacpac"]
 categories  = ["command-line-utilities", "database"]
+readme      = "README.md"
+homepage    = "https://github.com/MrKruge/sqlrustler"
+exclude     = [
+    "/build-agents/",
+    "/.claude/",
+    "/.github/",
+    "/target/",
+    "/assets/",
+    "/PERF_STATUS.md",
+    "/SETUP.md",
+    "/.env",
+    "*.rustler",
+    "*.sqlrustler",
+    "*.rustler.tmp",
+    "*.sqlrustler.tmp",
+]
 
 [[bin]]
 name = "sqlrustler"
@@ -31,7 +47,6 @@ tiberius       = { version = "0.13", default-features = false, features = [
     "chrono",
 ] }
 bb8            = "0.9"
-bb8-tiberius   = { path = "vendor/bb8-tiberius", features = ["tls", "tds73", "chrono"] }
 tokio-util     = { version = "0.7", features = ["compat"] }
 
 # Columnar / Parquet
